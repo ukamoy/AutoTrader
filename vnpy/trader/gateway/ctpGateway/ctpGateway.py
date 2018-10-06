@@ -157,8 +157,10 @@ class CtpGateway(VtGateway):
                         }
             self.ds = RemoteDataService()
             self.ds.init_from_config(data_config)
-        # log.logContent = u'jaqs连接成功'
-        # self.onLog(log)
+            log = VtLogData()
+            log.gatewayName = self.gatewayName
+            log.logContent = u'jaqs连接成功'
+            self.onLog(log)
 
         # 初始化并启动查询
         self.initQuery()
@@ -267,7 +269,7 @@ class CtpGateway(VtGateway):
         #     log.logContent = u'CTP没有该品种交易所信息'
         #     self.onLog(log)
         #     return
-        symbol = symbol[:-4]+ exchange
+        symbol = symbol[:-4] + '.' + exchange
         # result= []
         start_time = since
         end_time = datetime.now().strftime('%Y%m%d')
@@ -276,7 +278,7 @@ class CtpGateway(VtGateway):
             i=0
 
             for trade_date in tradeDays:
-                minutebar,msg=self.ds.bar(symbol='j.DCE',start_time=190000,end_time=185959,trade_date=trade_date, freq='1M',fields="")
+                minutebar,msg=self.ds.bar(symbol=symbol,start_time=190000,end_time=185959,trade_date=trade_date, freq='1M',fields="")
                 trade_datetime = []
                 for j in range(0,len(minutebar)):
                     date,time = minutebar['date'][j],minutebar['time'][j]        
