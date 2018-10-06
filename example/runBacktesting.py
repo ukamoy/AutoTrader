@@ -7,7 +7,7 @@ from vnpy.trader.app.ctaStrategy.ctaBacktesting import BacktestingEngine
 from vnpy.trader.app.ctaStrategy.ctaBase import *
 
 if __name__ == '__main__':
-    from strategyBollBand import BollBandsStrategy
+    from StrategyBollBand import BollBandsStrategy
     
     # 创建回测引擎
     engine = BacktestingEngine()

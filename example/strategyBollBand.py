@@ -99,6 +99,12 @@ class BollBandsStrategy(CtaTemplate):
                     self.am15Dict[s].updateBar(bar)
                 for bar in kline1[s]:
                     self.onBar(bar)
+            
+            # CTP 加载历史数据的方式:
+            # for s in self.symbolList:
+            #     kline = self.loadHistoryBar(s,'1min', since = '20180901')
+            #     for bar in kline:
+            #         self.onBar(bar)
 
         # 如果交易所没有提供下载历史最新的数据接口，可使用以下方法从本地数据库加载实盘需要的数据：
         # initdata = self.loadBar(90)  # 如果是tick数据库可以使用self.loadTick(), 参数为天数
