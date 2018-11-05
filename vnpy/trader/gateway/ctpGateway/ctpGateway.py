@@ -234,6 +234,17 @@ class CtpGateway(VtGateway):
         """设置是否要启动循环查询"""
         self.qryEnabled = qryEnabled
 
+    freq_map = {
+        "1min": "1M",
+        "5min": "5M",
+        "15min": "15M"
+    }
+
+    freq_delta = {
+        "1M": timedelta(minutes=1),
+        "5M": timedelta(minutes=5),
+        "15M": timedelta(minutes=15),
+    }
 
     def loadHistoryBar(self, vtSymbol, type_, size= None, since = None):
         if size and not since:
@@ -281,10 +292,7 @@ class CtpGateway(VtGateway):
                 minutebar,msg=self.ds.bar(symbol=symbol,start_time=190000,end_time=185959,trade_date=trade_date, freq=typeMap[type_],fields="")
                 trade_datetime = []
                 for j in range(0,len(minutebar)):
-                    date,time = minutebar['date'][j],minutebar['time'][j]        
-                    year,month,day=date // 10000, date // 100 % 100,date % 100,
-                    hour,minute,second =time // 10000 , time // 100 % 100, time % 100
-                    stamp = pd.datetime(year,month,day,hour,minute,second)
+                    stamp = datetime.strptime((str(minutebar['date'][j]) + ' ' + str(minutebar['time'][j]).zfill(6)),"%Y%m%d %H%M%S")
                     trade_datetime.insert(j,stamp)
 
                 minutebar['datetime']=trade_datetime
@@ -295,8 +303,8 @@ class CtpGateway(VtGateway):
                 else:
                     result= minute
                     i+=1
-            # print(result.tail(2))
-            return result#.to_dict(orient = 'list')
+            result["datetime"] = result["datetime"] - self.freq_delta[type_]
+            return result
 
     def qryAllOrders(self, vtSymbol, order_id, status= None):
         pass
