@@ -28,7 +28,7 @@ if __name__ == '__main__':
     engine.setPriceTick(0.2)    # 股指最小价格变动
     
     # 策略报告默认不输出，默认文件夹生成于当前文件夹下
-    engine.setLog(True,"D:\\log\\")        # 设置是否输出日志和交割单, 默认值是不输出False
+    engine.setLog(True,"D:\\vnpy_data\\log\\")        # 设置是否输出日志和交割单, 默认值是不输出False
     engine.setCachePath("D:\\vnpy_data\\") # 设置本地数据缓存的路径，默认存在用户文件夹内
     
     # 在引擎中创建策略对象

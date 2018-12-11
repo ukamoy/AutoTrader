@@ -85,7 +85,11 @@ class HuobiGateway(VtGateway):
         self.tradeApi.connect(exchange, symbols, accessKey, secretKey)
 
         # 初始化并启动查询
-        self.initQuery()
+        setQryEnabled = setting.get('setQryEnabled', None)
+        self.setQryEnabled(setQryEnabled)
+
+        setQryFreq = setting.get('setQryFreq', 60)
+        self.initQuery(setQryFreq)
 
     #----------------------------------------------------------------------
     def subscribe(self, subscribeReq):
@@ -119,14 +123,14 @@ class HuobiGateway(VtGateway):
             self.tradeApi.close()
 
     #----------------------------------------------------------------------
-    def initQuery(self):
+    def initQuery(self, freq = 60):
         """初始化连续查询"""
         if self.qryEnabled:
             # 需要循环的查询函数列表
             self.qryFunctionList = [self.qryInfo]
 
             self.qryCount = 0           # 查询触发倒计时
-            self.qryTrigger = 1         # 查询触发点
+            self.qryTrigger = freq         # 查询触发点
             self.qryNextFunction = 0    # 上次运行的查询函数索引
 
             self.startQuery()
@@ -175,7 +179,7 @@ class HuobiGateway(VtGateway):
             self.writeLog("不支持的历史数据初始化方法，请检查type_参数")
             self.writeLog("HUOBI Type_ hint：1min,5min,15min,30min,60min,1day,1week,1year")
             return '-1'
-        symbol = vtSymbol.split('.')[0]
+        symbol = vtSymbol.split(VN_SEPARATOR)[0]
         period = type_
         data = self.tradeApi.loadHistoryBar(symbol,period,size)
         return data
@@ -239,7 +243,7 @@ class HuobiDataApi(DataApi):
         tick.gatewayName = self.gatewayName
         tick.symbol = symbol
         tick.exchange = EXCHANGE_HUOBI
-        tick.vtSymbol = '.'.join([tick.symbol, self.gatewayName])
+        tick.vtSymbol = VN_SEPARATOR.join([tick.symbol, self.gatewayName])
         self.tickDict[symbol] = tick
 
         self.subscribeMarketDepth(symbol)
@@ -487,7 +491,7 @@ class HuobiTradeApi(TradeApi):
         """发单"""
         self.localid += 1
         localid = str(self.localid)
-        vtOrderID = '.'.join([self.gatewayName, localid])
+        vtOrderID = VN_SEPARATOR.join([self.gatewayName, localid])
 
         if orderReq.direction == DIRECTION_LONG and orderReq.priceType == 0:
             type_ = 'buy-limit'
@@ -565,7 +569,7 @@ class HuobiTradeApi(TradeApi):
 
             contract.symbol = d['base-currency'] + d['quote-currency']
             contract.exchange = EXCHANGE_HUOBI
-            contract.vtSymbol = '.'.join([contract.symbol, self.gatewayName])
+            contract.vtSymbol = VN_SEPARATOR.join([contract.symbol, self.gatewayName])
 
             contract.name = '/'.join([d['base-currency'].upper(), d['quote-currency'].upper()])
             contract.priceTick = 1 / pow(10, d['price-precision'])
@@ -612,9 +616,9 @@ class HuobiTradeApi(TradeApi):
                 pos.symbol = d['currency']
                 pos.exchange = EXCHANGE_HUOBI
                 pos.offset = OFFSET_NONE
-                pos.vtSymbol = '.'.join([pos.symbol, self.gatewayName])
+                pos.vtSymbol = VN_SEPARATOR.join([pos.symbol, self.gatewayName])
                 pos.direction = DIRECTION_LONG
-                pos.vtPositionName = '.'.join([pos.vtSymbol, pos.direction])
+                pos.vtPositionName = VN_SEPARATOR.join([pos.vtSymbol, pos.direction])
 
             pos.position += float(d['balance'])
             if d['type'] == 'frozen':
@@ -674,16 +678,17 @@ class HuobiTradeApi(TradeApi):
                 order.gatewayName = self.gatewayName
 
                 order.orderID = localid
-                order.vtOrderID = '.'.join([order.gatewayName, order.orderID])
+                order.vtOrderID = VN_SEPARATOR.join([order.gatewayName, order.orderID])
 
                 order.symbol = d['symbol']
                 order.exchange = EXCHANGE_HUOBI
                 order.offset = OFFSET_NONE
-                order.vtSymbol = '.'.join([order.symbol, self.gatewayName])
+                order.vtSymbol = VN_SEPARATOR.join([order.symbol, self.gatewayName])
 
                 order.price = float(d['price'])
                 order.totalVolume = float(d['amount'])
                 order.orderTime = datetime.fromtimestamp(d['created-at']/1000).strftime('%H:%M:%S')
+                order.orderDatetime = datetime.fromtimestamp(d['created-at']/1000)
 
                 if 'buy' in d['type']:
                     order.direction = DIRECTION_LONG
@@ -695,6 +700,7 @@ class HuobiTradeApi(TradeApi):
             # 数据更新，只有当成交数量或者委托状态变化时，才执行推送
             if d['canceled-at']:
                 order.cancelTime = datetime.fromtimestamp(d['canceled-at']/1000).strftime('%H:%M:%S')
+                order.cancelDatetime = datetime.fromtimestamp(d['canceled-at']/1000)
 
             newTradedVolume = float(d['field-amount'])
             newStatus = statusMapReverse.get(d['state'], STATUS_UNKNOWN)
@@ -742,11 +748,11 @@ class HuobiTradeApi(TradeApi):
             trade.gatewayName = self.gatewayName
 
             trade.tradeID = str(tradeID)
-            trade.vtTradeID = '.'.join([trade.tradeID, trade.gatewayName])
+            trade.vtTradeID = VN_SEPARATOR.join([trade.tradeID, trade.gatewayName])
 
             trade.symbol = d['symbol']
             trade.exchange = EXCHANGE_HUOBI
-            trade.vtSymbol = '.'.join([trade.symbol, self.gatewayName])
+            trade.vtSymbol = VN_SEPARATOR.join([trade.symbol, self.gatewayName])
 
             if 'buy' in d['type']:
                 trade.direction = DIRECTION_LONG
@@ -756,16 +762,17 @@ class HuobiTradeApi(TradeApi):
             strOrderID = str(d['order-id'])
             localid = self.orderLocalDict.get(strOrderID, '')
             trade.orderID = localid
-            trade.vtOrderID = '.'.join([trade.gatewayName, trade.orderID])
+            trade.vtOrderID = VN_SEPARATOR.join([trade.gatewayName, trade.orderID])
 
             trade.tradeID = str(tradeID)
-            trade.vtTradeID = '.'.join([trade.gatewayName, trade.tradeID])
+            trade.vtTradeID = VN_SEPARATOR.join([trade.gatewayName, trade.tradeID])
 
             trade.price = float(d['price'])
             trade.volume = float(d['filled-amount'])
 
             dt = datetime.fromtimestamp(d['created-at']/1000)
             trade.tradeTime = dt.strftime('%H:%M:%S')
+            trade.tradeDatetime = dt
 
             self.gateway.onTrade(trade)
 

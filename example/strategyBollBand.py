@@ -1,8 +1,6 @@
 from __future__ import division
 from vnpy.trader.vtConstant import *
-from vnpy.trader.app.ctaStrategy.ctaTemplate import (CtaTemplate,
-                                                     BarGenerator,
-                                                     ArrayManager)
+from vnpy.trader.app.ctaStrategy.ctaTemplate import (CtaTemplate)
 import talib as ta
 
 ########################################################################
@@ -13,9 +11,6 @@ class BollBandsStrategy(CtaTemplate):
     # 策略交易标的的列表
     symbolList = []         # 初始化为空
     tradeList = []
-    posDict = {}            # 初始化仓位字典
-    eveningDict = {}        # 初始化可平仓
-    bondDict = {}           # 初始化保证金
 
     # 策略参数
     fastWindow = 55         # 快速均线参数
@@ -53,7 +48,7 @@ class BollBandsStrategy(CtaTemplate):
                'maTrend']
 
     # 同步列表，保存了需要保存到数据库的变量名称
-    syncList = ['posDict', 'eveningDict', 'bondDict']
+    syncList = ['posDict', 'eveningDict', 'accountDict']
 
     #----------------------------------------------------------------------
     def __init__(self, ctaEngine, setting):

@@ -16,10 +16,10 @@ import websocket
 import zlib
 
 # 常量定义
-# OKEX_SPOT_HOST = 'wss://real.okex.com:10440/websocket?compress=true'
-# OKEX_FUTURES_HOST = 'wss://real.okex.com:10440/websocket/okexapi?compress=true'
-OKEX_SPOT_HOST = 'wss://okexcomreal.bafang.com:10441/websocket?compress=true'
-OKEX_FUTURES_HOST = 'wss://okexcomreal.bafang.com:10441/websocket/okexapi?compress=true'
+OKEX_SPOT_HOST = 'wss://real.okex.com:10440/websocket?compress=true'
+OKEX_FUTURES_HOST = 'wss://real.okex.com:10440/websocket/okexapi?compress=true'
+# OKEX_SPOT_HOST = 'wss://okexcomreal.bafang.com:10441/websocket?compress=true'
+# OKEX_FUTURES_HOST = 'wss://okexcomreal.bafang.com:10441/websocket/okexapi?compress=true'
 
 SPOT_CURRENCY = ["usdt",
                  "btc",
@@ -399,7 +399,7 @@ class OkexSpotApi(OkexApi):
 
     # RESTFUL 
     def _get_url_func(self, url, params=""):
-        return 'https://www.okex.me/api' + "/" + "v1" + "/" + url + params
+        return 'https://www.okex.com/api' + "/" + "v1" + "/" + url + params
     
     def _chg_dic_to_str(self, dictionary):
         keys = list(dictionary.keys())
@@ -626,11 +626,11 @@ class OkexFuturesApi(OkexApi):
     # RESTFUL 接口
     def _post_url_func(self, url):
         # return 'https://okexcomweb.bafang.com/api' + "/" + "v1" + "/" + url + ".do"
-        return 'https://www.okex.me/api' + "/" + "v1" + "/" + url + ".do"
+        return 'https://www.okex.com/api' + "/" + "v1" + "/" + url + ".do"
     
     def _get_url_func(self, url, params=""):
         # return 'https://okexcomweb.bafang.com/api' + "/" + "v1" + "/" + url + params
-        return 'https://www.okex.me/api' + "/" + "v1" + "/" + url + params
+        return 'https://www.okex.com/api' + "/" + "v1" + "/" + url + params
     
     def _chg_dic_to_str(self, dictionary):
         keys = list(dictionary.keys())
