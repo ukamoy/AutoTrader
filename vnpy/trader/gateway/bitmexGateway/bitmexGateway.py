@@ -5,6 +5,7 @@ vnpy.api.bitmex的gateway接入
 '''
 from __future__ import print_function
 
+import functools
 import os
 import json
 import hashlib
@@ -13,11 +14,14 @@ import traceback
 from datetime import datetime, timedelta
 from copy import copy
 from math import pow
+from concurrent.futures import Future
+from urllib.error import HTTPError
 
 from vnpy.api.bitmex import BitmexRestApi, BitmexWebsocketApiWithHeartbeat as BitmexWebsocketApi
 from vnpy.api.bitmex.utils import hmac_new
 from vnpy.trader.vtGateway import *
 from vnpy.trader.vtFunction import getJsonPath, getTempPath
+from vnpy.trader.app.ctaStrategy import CtaTemplate
 
 # 委托状态类型映射
 statusMapReverse = {}
@@ -74,6 +78,7 @@ class BitmexGateway(VtGateway):
             apiSecret = str(setting['apiSecret'])
             sessionCount = int(setting['sessionCount'])
             symbols = setting['symbols']
+            testnet = setting.get('testnet', False)
         except KeyError:
             log = VtLogData()
             log.gatewayName = self.gatewayName
@@ -82,13 +87,31 @@ class BitmexGateway(VtGateway):
             return
 
         # 创建行情和交易接口对象
+        self.restApi.testnet = testnet
+        self.wsApi.testnet = testnet
         self.restApi.connect(apiKey, apiSecret, sessionCount)
         self.wsApi.connect(apiKey, apiSecret, symbols)
+
+        setQryEnabled = setting.get('setQryEnabled', False)
+        self.setQryEnabled(setQryEnabled)
+
+        setQryFreq = setting.get('setQryFreq', 60)
+        self.initQuery(setQryFreq)
 
     #----------------------------------------------------------------------
     def subscribe(self, subscribeReq):
         """订阅行情"""
         pass
+    
+    def setLeverage(self, symbol, leverage):
+        fut = Future()
+        rep = fut.result()
+        return rep
+
+    def getLeverage(self, symbol):
+        fut = Future()
+        rep = fut.result()
+        return rep
 
     #----------------------------------------------------------------------
     def sendOrder(self, orderReq):
@@ -107,14 +130,14 @@ class BitmexGateway(VtGateway):
         self.wsApi.close()
     
     #----------------------------------------------------------------------
-    def initQuery(self):
+    def initQuery(self,  freq = 60):
         """初始化连续查询"""
         if self.qryEnabled:
             # 需要循环的查询函数列表
             self.qryFunctionList = [self.queryAccount]
 
             self.qryCount = 0           # 查询触发倒计时
-            self.qryTrigger = 1         # 查询触发点
+            self.qryTrigger = freq         # 查询触发点
             self.qryNextFunction = 0    # 上次运行的查询函数索引
 
             self.startQuery()
@@ -167,10 +190,23 @@ class BitmexGateway(VtGateway):
         symbol= vtSymbol.split(VN_SEPARATOR)[0]
         return self.restApi.rest_future_bar(symbol, KlinePeriodMap[type_], size, since)
 
+
+
     def qryAllOrders(self, vtSymbol, order_id, status= None):
         pass
 
 ########################################################################
+def catch_error_with_gateway(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            err = VtErrorData()
+            err.errorMsg = e
+            self.gateway.onError(e)
+            return None
+
 class RestApi(BitmexRestApi):
     """REST API实现"""
 
@@ -207,7 +243,7 @@ class RestApi(BitmexRestApi):
         self.orderId += 1
         orderId = self.date + self.orderId
         vtOrderID = VN_SEPARATOR.join([self.gatewayName, str(orderId)])
-        symbol = orderReq.symbol.split(':')[0]
+        symbol = orderReq.symbol.split(VN_SEPARATOR)[0]
         
         req = {
             'symbol': orderReq.symbol,
@@ -217,7 +253,8 @@ class RestApi(BitmexRestApi):
             'orderQty': orderReq.volume,
             'clOrdID': str(orderId)
         }
-
+        
+        self.addReq('')
         self.addReq('POST', '/order', self.onSendOrder, postdict=req)
         
         return vtOrderID
@@ -235,37 +272,40 @@ class RestApi(BitmexRestApi):
 
     #----------------------------------------------------------------------
     def onSendOrder(self, data, reqid):
-        """
-        https://www.bitmex.com:443 "POST /api/v1/order HTTP/1.1" 200 None
-        {'multiLegReportingType': 'SingleSecurity', 'displayQty': None, 'workingIndicator': True, 'leavesQty': 1, 'ordRejReason': '', 
-        'transactTime': '2018-10-08T02:38:01.201Z', 'triggered': '', 'stopPx': None, 'ordStatus': 'New', 'orderQty': 1, 'cumQty': 0, 
-        'symbol': 'EOSZ18', 'currency': 'XBT', 'clOrdID': '181008103701000001', 'ordType': 'Limit', 'pegPriceType': '', 'execInst': '', 
-        'orderID': '53913329-7b22-ef10-5a90-457998c1da96', 'simpleCumQty': 0, 'price': 7.17e-05, 'text': 'Submitted via API.', 'contingencyType': '', 
-        'exDestination': 'XBME', 'avgPx': None, 'side': 'Buy', 'simpleOrderQty': None, 'timestamp': '2018-10-08T02:38:01.201Z', 'clOrdLinkID': '', 
-        'account': 705899, 'settlCurrency': 'XBt', 'simpleLeavesQty': 1, 'timeInForce': 'GoodTillCancel', 'pegOffsetValue': None}
-        """
-        pass
-        # print(data, reqid)
+        """"""
+        print(data, reqid)
     
     #----------------------------------------------------------------------
     def onCancelOrder(self, data, reqid):
-        """
-        https://www.bitmex.com:443 "DELETE /api/v1/order?clOrdID=181008103701000001 HTTP/1.1" 200 None
-        {'multiLegReportingType': 'SingleSecurity', 'displayQty': None, 'workingIndicator': False, 'leavesQty': 0, 'ordRejReason': '', 
-        'transactTime': '2018-10-08T02:38:01.201Z', 'triggered': '', 'stopPx': None, 'ordStatus': 'Canceled', 'orderQty': 1, 'cumQty': 0, 
-        'symbol': 'EOSZ18', 'currency': 'XBT', 'clOrdID': '181008103701000001', 'ordType': 'Limit', 'pegPriceType': '', 'execInst': '', 
-        'orderID': '53913329-7b22-ef10-5a90-457998c1da96', 'simpleCumQty': 0, 'price': 7.17e-05, 'text': 'Canceled: Canceled via API.\nSubmitted via API.', 
-        'contingencyType': '', 'exDestination': 'XBME', 'avgPx': None, 'side': 'Buy', 'simpleOrderQty': None, 'timestamp': '2018-10-08T02:38:14.351Z', 
-        'clOrdLinkID': '', 'account': 705899, 'settlCurrency': 'XBt', 'simpleLeavesQty': 0, 'timeInForce': 'GoodTillCancel', 'pegOffsetValue': None}
-        """
+        """"""
         pass
-    
+
+    @catch_error_with_gateway
+    def setLeverage(self, symbol, leverage):
+        assert 0<=leverage<=20, "杠杆率应该在0到20之间"
+        req = {"leverage": leverage, "symbol": symbol}
+        rep = self.blockReq('POST', '/position/leverage', postdict=req)
+        if "leverage" in rep:
+            return int(rep["leverage"])
+        else:
+            raise ValueError("setLeverage返回未知数据: %s" % rep)
+
+    @catch_error_with_gateway
+    def getLeverage(self, symbol):
+        fut = Future()
+        rep = self.blockReq("GET", "/position", params={"symbol": symbol})
+        if "leverage" in rep:
+            return int(rep["leverage"])
+        else:
+            raise ValueError("getLeverage返回未知数据: %s" % rep)
+
     #----------------------------------------------------------------------
-    def onError(self, code, error):
+    def onError(self, code, error, reqid):
         """"""
         e = VtErrorData()
         e.errorID = code
-        e.errorID = error
+        e.errMsg = error
+        e.additionalInfo = "请求编号:%s" % reqid
         self.gateway.onError(e)
     
     def rest_future_bar(self,symbol, type_, size, since = None):
@@ -372,9 +412,7 @@ class WebsocketApi(BitmexWebsocketApi):
 
     #----------------------------------------------------------------------
     def authenticate(self):
-        """
-        {'success': True, 'request': {'op': 'authKey', 'args': ['****key******', 15******25, 'cf7*********86f']}}
-        """
+        """"""
         expires = int(time.time())
         method = 'GET'
         path = '/realtime'
@@ -398,21 +436,7 @@ class WebsocketApi(BitmexWebsocketApi):
     
     #----------------------------------------------------------------------
     def onTick(self, d):
-        """
-        {'data': [{'grossValue': 15147, 'symbol': 'XBTUSD', 'trdMatchID': 'ea9528d0-e7f3-d1e6-5c8b-24b1bdf7f869', 'homeNotional': 0.00015147, 
-        'tickDirection': 'ZeroPlusTick', 'foreignNotional': 1, 'timestamp': '2018-10-09T03:21:02.225Z', 'size': 1, 'price': 6602, 'side': 'Buy'}], 
-        'table': 'trade', 'action': 'insert'}
-
-        {'data': [{'grossValue': None, 'symbol': '.XBTUSDPI8H', 'trdMatchID': '00000000-0000-0000-0000-000000000000', 'homeNotional': None, 
-        'tickDirection': 'MinusTick', 'foreignNotional': None, 'timestamp': '2018-10-08T20:00:00.000Z', 'size': 0, 'price': 6.6e-05, 'side': 'Buy'}, 
-         {'grossValue': 18587772, 'symbol': 'XRPZ18', 'trdMatchID': 'cf95c5c3-c490-b564-65fe-ac8c52455bab', 'homeNotional': 2484, 'tickDirection': 'ZeroPlusTick', 
-         'foreignNotional': 0.18587772, 'timestamp': '2018-10-09T03:20:26.958Z', 'size': 2484, 'price': 7.483e-05, 'side': 'Buy'}, 
-        {'grossValue': 106036000, 'symbol': 'XBTUSD', 'trdMatchID': 'dd0452a6-592f-c78a-2623-7139e16ca26d', 'homeNotional': 1.06036, 'tickDirection': 'ZeroMinusTick', 
-        'foreignNotional': 7000, 'timestamp': '2018-10-09T03:20:50.908Z', 'size': 7000, 'price': 6601.5, 'side': 'Sell'}], 
-        'types': {'grossValue': 'long', 'symbol': 'symbol', 'trdMatchID': 'guid', 'homeNotional': 'float', 'tickDirection': 'symbol', 'foreignNotional': 'float', 
-        'timestamp': 'timestamp', 'size': 'long', 'price': 'float', 'side': 'symbol'}, 'foreignKeys': {'symbol': 'instrument', 'side': 'side'}, 
-        'table': 'trade', 'action': 'partial','attributes': {'symbol': 'grouped', 'timestamp': 'sorted'}, 'filter': {}, 'keys': []}
-        """
+        """"""
         symbol = d['symbol']
 
         tick = self.tickDict.get(symbol, None)
@@ -429,14 +453,7 @@ class WebsocketApi(BitmexWebsocketApi):
 
     #----------------------------------------------------------------------
     def onDepth(self, d):
-        """
-        {'data': [{
-        'bids': [[6605.5, 15912], [6605, 125], [6604.5, 125], [6604, 13159], [6603.5, 22975], [6603, 28639], [6602.5, 5429], [6602, 150], [6601.5, 38100], [6601, 15459]], 
-        'symbol': 'XBTZ18', 
-        'asks': [[6606, 392365], [6606.5, 229102], [6607, 323], [6607.5, 12612], [6608, 20000], [6609, 14500], [6609.5, 102352], [6610, 52487], [6610.5, 2225], [6611.5, 10025]], 
-        'timestamp': '2018-10-09T03:21:04.409Z'}], 'table': 'orderBook10', 'action': 'update'}
-
-        """
+        """"""
         symbol = d['symbol']
         tick = self.tickDict.get(symbol, None)
         if not tick:
@@ -461,20 +478,7 @@ class WebsocketApi(BitmexWebsocketApi):
     
     #----------------------------------------------------------------------
     def onTrade(self, d):
-        """
-        {'data': [], 'types': {
-            'lastMkt': 'symbol', 'symbol': 'symbol', 'ordType': 'symbol', 'stopPx': 'float', 'execType': 'symbol', 'trdMatchID': 'guid', 'contingencyType': 'symbol', 
-            'lastQty': 'long', 'side': 'symbol', 'avgPx': 'float', 'pegPriceType': 'symbol', 'price': 'float', 
-            'ordRejReason': 'symbol', 'pegOffsetValue': 'float', 'exDestination': 'symbol', 'execID': 'guid', 'workingIndicator': 'boolean', 
-            'execComm': 'long', 'clOrdLinkID': 'symbol', 'orderQty': 'long', 'multiLegReportingType': 'symbol', 'displayQty': 'long', 'account': 'long', 
-            'clOrdID': 'symbol', 'orderID': 'guid', 'lastPx': 'float', 'simpleCumQty': 'float', 'underlyingLastPx': 'float', 'simpleLeavesQty': 'float', 
-            'foreignNotional': 'float', 'cumQty': 'long', 'transactTime': 'timestamp', 'timestamp': 'timestamp', 'settlCurrency': 'symbol', 'text': 'symbol', 
-            'timeInForce': 'symbol', 'execInst': 'symbol', 'simpleOrderQty': 'float', 'ordStatus': 'symbol', 'leavesQty': 'long', 'execCost': 'long', 'lastLiquidityInd': 'symbol', 
-            'homeNotional': 'float', 'triggered': 'symbol', 'commission': 'float', 'tradePublishIndicator': 'symbol', 'currency': 'symbol'}, 
-            'foreignKeys': {'ordStatus': 'ordStatus', 'symbol': 'instrument', 'side': 'side'}, 
-            'table': 'execution', 'action': 'partial', 'attributes': {'transactTime': 'sorted', 'execID': 'grouped', 'account': 'grouped', 'execType': 'grouped'}, 
-            'filter': {'account': 705899}, 'keys': ['execID']}
-        """
+        """"""
         if not d['lastQty']:
             return
         
@@ -503,23 +507,14 @@ class WebsocketApi(BitmexWebsocketApi):
         trade.direction = directionMapReverse[d['side']]
         trade.price = d['lastPx']
         trade.volume = d['lastQty']
-        trade.tradeTime = d['timestamp'][0:10].replace('-', '')
+        trade.tradeTime = d['timestamp'].replace('-','').replace('T',' ').replace('Z','')
+        trade.tradeDatetime = datetime.strptime(trade.tradeTime, '%Y%m%d %H:%M:%S.%f')
         
         self.gateway.onTrade(trade)
     
     #----------------------------------------------------------------------
     def onOrder(self, d):
-        """
-        {'data': [], 'types': {'cumQty': 'long', 'stopPx': 'float', 'symbol': 'symbol', 'ordType': 'symbol', 'multiLegReportingType': 'symbol', 
-        'displayQty': 'long', 'triggered': 'symbol', 'clOrdID': 'symbol', 'contingencyType': 'symbol', 'orderID': 'guid', 'timestamp': 'timestamp', 
-        'simpleCumQty': 'float', 'text': 'symbol', 'simpleLeavesQty': 'float', 'orderQty': 'long', 'account': 'long', 'transactTime': 'timestamp', 
-        'settlCurrency': 'symbol', 'clOrdLinkID': 'symbol', 'avgPx': 'float', 'timeInForce': 'symbol', 'execInst': 'symbol', 'simpleOrderQty': 'float', 
-        'ordStatus': 'symbol', 'pegPriceType': 'symbol', 'price': 'float', 'leavesQty': 'long', 'ordRejReason': 'symbol', 'pegOffsetValue': 'float', 
-        'exDestination': 'symbol', 'side': 'symbol', 'workingIndicator': 'boolean', 'currency': 'symbol'}, 
-        'foreignKeys': {'ordStatus': 'ordStatus', 'symbol': 'instrument', 'side': 'side'}, 
-        'table': 'order', 'action': 'partial', 
-        'attributes': {'ordStatus': 'grouped', 'workingIndicator': 'grouped', 'account': 'grouped', 'orderID': 'grouped'}, 'filter': {'account': 705899}, 'keys': ['orderID']}
-        """
+        """"""
         if 'ordStatus' not in d:
             return
         
@@ -547,7 +542,8 @@ class WebsocketApi(BitmexWebsocketApi):
                 order.price = d['price']
                 
             order.totalVolume = d['orderQty']
-            order.orderTime = d['timestamp'][0:10].replace('-', '')
+            order.orderTime = d['timestamp'].replace('-','').replace('T',' ').replace('Z','')
+            order.orderDatetime = datetime.strptime(order.orderTime,"%Y%m%d %H:%M:%S.%f")
     
             self.orderDict[sysID] = order
         
@@ -558,34 +554,7 @@ class WebsocketApi(BitmexWebsocketApi):
 
     #----------------------------------------------------------------------
     def onPosition(self, d):
-        """
-        {'data': [{'riskValue': 0, 'posComm': 0, 'posCost2': 0, 'riskLimit': 5000000000, 'posState': '', 'execBuyQty': 0, 'currentTimestamp': '2018-10-09T03:00:00.831Z', 
-        'prevClosePrice': 0.0008899, 'initMarginReq': 0.05, 'realisedTax': 0, 'posInit': 0, 'prevRealisedPnl': 90, 'grossExecCost': 0, 'simpleCost': 0, 'indicativeTaxRate': 0, 
-        'prevUnrealisedPnl': 0, 'execSellQty': 0, 'realisedGrossPnl': 0, 'rebalancedPnl': -90, 'unrealisedRoePcnt': 0, 'simpleQty': 0, 'realisedPnl': 90, 'maintMarginReq': 0.025, 
-        'simpleValue': 0, 'simplePnl': 0, 'posAllowance': 0, 'sessionMargin': 0, 'foreignNotional': 0, 'currentQty': 0, 'unrealisedGrossPnl': 0, 'marginCallPrice': None, 'currentCost': 0, 
-        'liquidationPrice': None, 'bankruptPrice': None, 'posCost': 0, 'varMargin': 0, 'breakEvenPrice': None, 'crossMargin': True, 'posLoss': 0, 'lastValue': 0, 'unrealisedCost': 0, 
-        'targetExcessMargin': 0, 'unrealisedTax': 0, 'realisedCost': 0, 'avgEntryPrice': None, 'symbol': 'EOSZ18', 'isOpen': False, 'maintMargin': 0, 'posCross': 0, 'currentComm': -90, 
-        'grossOpenCost': 0, 'initMargin': 0, 'posMaint': 0, 'openOrderSellQty': 0, 'openOrderBuyCost': 0, 'unrealisedPnl': 0, 'posMargin': 0, 'lastPrice': None, 'indicativeTax': 0, 
-        'execBuyCost': 0, 'underlying': 'EOS', 'openOrderBuyPremium': 0, 'execSellCost': 0, 'openingTimestamp': '2018-10-09T03:00:00.000Z', 'deleveragePercentile': None, 'execComm': 0, 
-        'execQty': 0, 'openOrderSellCost': 0, 'openingCost': 0, 'openOrderBuyQty': 0, 'avgCostPrice': None, 'openingQty': 0, 'taxableMargin': 0, 'shortBankrupt': 0, 'openingComm': -90, 
-        'markValue': 0, 'markPrice': None, 'quoteCurrency': 'XBT', 'timestamp': '2018-10-09T03:00:00.831Z', 'unrealisedPnlPcnt': 0, 'account': 705899, 'longBankrupt': 0, 'execCost': 0, 
-        'grossOpenPremium': 0, 'homeNotional': 0, 'openOrderSellPremium': 0, 'commission': 0.0025, 'simplePnlPcnt': 0, 'currency': 'XBt', 'leverage': 20, 'taxBase': 0},], 
-        
-        'types': {'riskValue': 'long', 'posComm': 'long', 'posCost2': 'long', 'riskLimit': 'long', 'posState': 'symbol', 'execBuyQty': 'long', 'currentTimestamp': 'timestamp', 
-        'prevClosePrice': 'float', 'initMarginReq': 'float', 'realisedTax': 'long', 'posInit': 'long', 'prevRealisedPnl': 'long', 'grossExecCost': 'long', 'simpleCost': 'float', 'indicativeTaxRate': 'float', 
-        'prevUnrealisedPnl': 'long', 'execSellQty': 'long', 'realisedGrossPnl': 'long', 'rebalancedPnl': 'long', 'unrealisedRoePcnt': 'float', 'simpleQty': 'float', 'realisedPnl': 'long', 'maintMarginReq': 'float', 
-        'simpleValue': 'float', 'simplePnl': 'float', 'posAllowance': 'long', 'sessionMargin': 'long', 'foreignNotional': 'float', 'currentQty': 'long', 'unrealisedGrossPnl': 'long', 'marginCallPrice': 'float',
-         'currentCost': 'long', 'liquidationPrice': 'float', 'bankruptPrice': 'float', 'posCost': 'long', 'varMargin': 'long', 'breakEvenPrice': 'float', 'crossMargin': 'boolean', 'posLoss': 'long', 
-         'lastValue': 'long', 'unrealisedCost': 'long', 'targetExcessMargin': 'long', 'unrealisedTax': 'long', 'realisedCost': 'long', 'avgEntryPrice': 'float', 'symbol': 'symbol', 'isOpen': 'boolean', 
-         'maintMargin': 'long', 'posCross': 'long', 'currentComm': 'long', 'grossOpenCost': 'long', 'initMargin': 'long', 'posMaint': 'long', 'openOrderSellQty': 'long', 'openOrderBuyCost': 'long', 
-         'unrealisedPnl': 'long', 'posMargin': 'long', 'lastPrice': 'float', 'indicativeTax': 'long', 'execBuyCost': 'long', 'underlying': 'symbol', 'openOrderBuyPremium': 'long', 'execSellCost': 'long', 
-         'openingTimestamp': 'timestamp', 'deleveragePercentile': 'float', 'execComm': 'long', 'execQty': 'long', 'openOrderSellCost': 'long', 'openingCost': 'long', 'openOrderBuyQty': 'long', 
-         'avgCostPrice': 'float', 'openingQty': 'long', 'taxableMargin': 'long', 'shortBankrupt': 'long', 'openingComm': 'long', 'markValue': 'long', 'markPrice': 'float', 'quoteCurrency': 'symbol', 
-         'timestamp': 'timestamp', 'unrealisedPnlPcnt': 'float', 'account': 'long', 'longBankrupt': 'long', 'execCost': 'long', 'grossOpenPremium': 'long', 'homeNotional': 'float', 'openOrderSellPremium': 'long', 
-         'commission': 'float', 'simplePnlPcnt': 'float', 'currency': 'symbol', 'leverage': 'float', 'taxBase': 'long'}, 'foreignKeys': {'symbol': 'instrument'}, 
-         'table': 'position', 'action': 'partial', 'attributes': {'underlying': 'grouped', 'quoteCurrency': 'grouped', 'symbol': 'grouped', 'account': 'sorted', 'currency': 'grouped'}, 
-         'filter': {'account': 705899}, 'keys': ['account', 'symbol', 'currency']}
-        """
+        """"""
         pos = VtPositionData()
         pos.gatewayName = self.gatewayName
         
@@ -602,23 +571,7 @@ class WebsocketApi(BitmexWebsocketApi):
     
     #----------------------------------------------------------------------
     def onAccount(self, d):
-        """
-        {'data': [{'prevState': '', 'riskValue': 0, 'availableMargin': 4499912, 'state': '', 'riskLimit': 1000000000000, 'pendingDebit': 0, 'marginLeverage': 0, 
-        'realisedPnl': 90, 'maintMargin': 0, 'excessMarginPcnt': 1, 'taxableMargin': 0, 'grossOpenPremium': 0, 'action': '', 'grossLastValue': 0, 'pendingCredit': 0, 
-        'prevUnrealisedPnl': 0, 'amount': 4499822, 'initMargin': 0, 'syntheticMargin': 0, 'unrealisedProfit': 0, 'unrealisedPnl': 0, 'marginBalancePcnt': 1, 'account': 705899, 
-        'walletBalance': 4499912, 'sessionMargin': 0, 'prevRealisedPnl': 90, 'timestamp': '2018-10-09T02:59:50.550Z', 'marginUsedPcnt': 0, 'grossExecCost': 0, 'indicativeTax': 0, 
-        'varMargin': 0, 'grossOpenCost': 0, 'excessMargin': 4499912, 'marginBalance': 4499912, 'withdrawableMargin': 4499912, 'targetExcessMargin': 0, 'confirmedDebit': 0, 
-        'grossComm': -90, 'commission': None, 'currency': 'XBt', 'grossMarkValue': 0}], 
-        
-        'types': {'prevState': 'symbol', 'riskValue': 'long', 'availableMargin': 'long', 'state': 'symbol', 'riskLimit': 'long', 'pendingDebit': 'long', 'marginLeverage': 'float', 
-        'realisedPnl': 'long', 'maintMargin': 'long', 'excessMarginPcnt': 'float', 'taxableMargin': 'long','grossOpenPremium': 'long', 'action': 'symbol', 'grossLastValue': 'long', 
-        'pendingCredit': 'long', 'prevUnrealisedPnl': 'long', 'amount': 'long', 'initMargin': 'long', 'syntheticMargin': 'long', 'unrealisedProfit': 'long', 'unrealisedPnl': 'long', 
-        'marginBalancePcnt': 'float', 'account': 'long', 'walletBalance': 'long', 'sessionMargin': 'long', 'prevRealisedPnl': 'long', 'timestamp': 'timestamp', 'marginUsedPcnt': 'float', 
-        'grossExecCost': 'long', 'indicativeTax': 'long', 'varMargin': 'long', 'grossOpenCost': 'long', 'excessMargin': 'long', 'marginBalance': 'long', 'withdrawableMargin': 'long', 
-        'targetExcessMargin': 'long', 'confirmedDebit': 'long', 'grossComm': 'long', 'commission': 'float', 'currency': 'symbol', 'grossMarkValue': 'long'}, 'foreignKeys': {}, 
-        
-        'table': 'margin', 'action': 'partial', 'attributes': {'account': 'sorted', 'currency': 'grouped'}, 'filter': {'account': 705899}, 'keys': ['account', 'currency']}
-        """
+        """"""
         accoundID = str(d['account'])
         
         if accoundID in self.accountDict:
@@ -641,26 +594,7 @@ class WebsocketApi(BitmexWebsocketApi):
 
     #----------------------------------------------------------------------
     def onContract(self, d):
-        """
-        {'data': [{'turnover': 72968598484, 'symbol': 'XBTUSD', 'volume': 4817469, 'totalTurnover': 11583681630151756, 
-        'totalVolume': 849110663653, 'timestamp': '2018-10-09T03:20:50.908Z'}], 'table': 'instrument', 'action': 'update'}
-
-        {'data': [{'highPrice': None, 'quoteToSettleMultiplier': None, 'riskLimit': None, 'relistInterval': None, 'rootSymbol': 'EVOL', 'publishTime': None, 'turnover': None, 
-        'bankruptLimitUpPrice': None, 'fundingQuoteSymbol': '', 'optionStrikeRound': None, 'isQuanto': False, 'bankruptLimitDownPrice': None, 'limitUpPrice': None, 'makerFee': None, 
-        'limitDownPrice': None, 'vwap': None, 'fairMethod': '', 'capped': False, 'maxPrice': None, 'lastChangePcnt': -0.0358, 'reference': 'BMEX', 'optionMultiplier': None, 'bidPrice': None, 
-        'maintMargin': None, 'openValue': 0, 'prevTotalVolume': None, 'impactAskPrice': None, 'openingTimestamp': None, 'deleverage': False, 'indicativeTaxRate': None, 'timestamp': '2018-10-09T03:15:00.000Z',
-         'maxOrderQty': None, 'sellLeg': '', 'indicativeFundingRate': None, 'listing': None, 'fairBasisRate': None, 'rebalanceInterval': None, 'markMethod': 'LastPrice', 'front': None, 'indicativeSettlePrice': None, 
-         'lowPrice': None, 'optionUnderlyingPrice': None, 'totalVolume': None, 'inverseLeg': '', 'limit': None, 'volume': None, 'positionCurrency': '', 'sessionInterval': None, 'fundingRate': None, 
-         'prevPrice24h': 4.75, 'symbol': '.EVOL7D', 'taxed': False, 'multiplier': None, 'optionStrikePrice': None, 'settle': None, 'expiry': None, 'hasLiquidity': False, 'underlyingToPositionMultiplier': None, 
-         'initMargin': None, 'state': 'Unlisted', 'impactBidPrice': None, 'foreignNotional24h': None, 'lastPrice': 4.58, 'buyLeg': '', 'homeNotional24h': None, 'typ': 'MRIXXX', 'settledPrice': None, 
-         'volume24h': None, 'rebalanceTimestamp': None, 'lotSize': None, 'underlying': 'ETH', 'fundingPremiumSymbol': '', 'underlyingToSettleMultiplier': None, 'takerFee': None, 
-         'referenceSymbol': '.BETHXBT', 'tickSize': 0.01, 'insuranceFee': None, 'midPrice': None, 'fundingInterval': None, 'fairPrice': None, 'settlementFee': None, 'impactMidPrice': None, 
-         'fundingTimestamp': None, 'underlyingSymbol': '.EVOL7D', 'markPrice': 4.58, 'quoteCurrency': 'XXX', 'closingTimestamp': None, 'riskStep': None, 'turnover24h': None, 'lastPriceProtected': None, 
-         'lastTickDirection': 'ZeroPlusTick', 'settlCurrency': '', 'prevClosePrice': None, 'totalTurnover': None, 'askPrice': None, 'openInterest': None, 'publishInterval': '2000-01-01T00:05:00.000Z', 
-         'fundingBaseSymbol': '', 'fairBasis': None, 'optionStrikePcnt': None, 'isInverse': False, 'calcInterval': '2000-01-08T00:00:00.000Z', 'prevTotalTurnover': None},
-         'foreignKeys': {'buyLeg': 'instrument', 'sellLeg': 'instrument', 'inverseLeg': 'instrument'}, 
-         'table': 'instrument', 'action': 'partial', 'attributes': {'symbol': 'unique'}, 'filter': {}, 'keys': ['symbol']}
-        """
+        """"""
         if 'tickSize' not in d:
             return
         
@@ -682,6 +616,20 @@ class WebsocketApi(BitmexWebsocketApi):
         """接口断开"""
         self.gateway.connected = False
         self.writeLog(u'Websocket API连接断开')
+
+
+class BitmexCtaTemplate(CtaTemplate):
+    def setLeverage(self, symbol, leverage):
+        symbolName, gatewayName = symbol.split(VN_SEPARATOR)[-1]
+        gateway = self.engine.getGateway()
+        assert isinstance(gateway, BitmexGateway), "只能对bitmex交易所的symbol调用setLeverage方法" 
+        return gateway.setLeverage(symbolName, leverage)
+
+    def getLeverage(self, symbol):
+        symbolName, gatewayName = symbol.split(VN_SEPARATOR)[-1]
+        gateway = self.engine.getGateway()
+        assert isinstance(gateway, BitmexGateway), "只能对bitmex交易所的symbol调用getLeverage方法" 
+        return gateway.getLeverage(symbolName, leverage)
 
 #----------------------------------------------------------------------
 def printDict(d):

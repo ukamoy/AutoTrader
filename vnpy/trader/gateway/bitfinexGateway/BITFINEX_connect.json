@@ -1,0 +1,7 @@
+{
+	"apiKey": "",
+	"secretKey": "",
+	"symbols": ["BTCUSD", "ETHUSD", "ETHBTC"],
+	"setQryEnabled": false,
+    "setQryFreq": 60
+}

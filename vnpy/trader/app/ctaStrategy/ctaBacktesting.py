@@ -200,7 +200,7 @@ class BacktestingEngine(object):
     #------------------------------------------------
     def parseData(self, dataClass, dataDict):
         data = dataClass()
-        data.__dict__ = dataDict
+        data.__dict__.update(dataDict)
         return data
         """
         "data.__dict__"  sample:
@@ -261,7 +261,7 @@ class BacktestingEngine(object):
                     except:
                         continue
                     
-                    dataList += [self.parseData(dataClass, item.to_dict()) for _,item in data_df[(data_df.datetime>=start) & (data_df.datetime<end)].iterrows()]                    
+                    dataList += [self.parseData(dataClass, item) for item in data_df[(data_df.datetime>=start) & (data_df.datetime<end)].to_dict("record")]                    
                     symbols_no_data[symbol].remove(file.replace(".h5",""))
 
         # 从mongodb下载数据，并缓存到本地
@@ -279,7 +279,7 @@ class BacktestingEngine(object):
                             del data_df["_id"]
 
                         # 筛选出需要的时间段
-                        dataList += [self.parseData(dataClass, item.to_dict()) for _,item in data_df[(data_df.datetime>=start) & (data_df.datetime<end)].iterrows()]
+                        dataList += [self.parseData(dataClass, item) for item in data_df[(data_df.datetime>=start) & (data_df.datetime<end)].to_dict("record")]
 
                         # 缓存到本地文件
                         if data_df.size>0:
@@ -299,6 +299,8 @@ class BacktestingEngine(object):
                     self.output("这些品种在我们的数据库里: %s"%self.dbClient[self.dbName].collection_names())
         except:
             self.output('失去MongoDB的连接，我们尝试使用本地缓存数据，请注意数据量')
+            import traceback
+            traceback.print_exc()
 
         if len(dataList) > 0:
             dataList.sort(key=lambda x: (x.datetime))
@@ -570,6 +572,8 @@ class BacktestingEngine(object):
                     elif sellCross and so.offset == OFFSET_NONE: 
                         self.strategy.posDict[symbol] -= so.volume
                         trade.price = min(bestCrossPrice, so.price)
+
+                    trade.price_avg = trade.price
                     
                     self.limitOrderCount += 1
                     orderID = str(self.limitOrderCount)
@@ -607,10 +611,10 @@ class BacktestingEngine(object):
     #------------------------------------------------
     # 策略接口相关
     #----------------------------------------------------------------------
-    def sendOrder(self, vtSymbol, orderType, price, volume, priceType, levelRate, strategy):
+    def sendOrder(self, vtSymbol, orderType, price, volume, priceType, strategy):
         """发单"""
         self.limitOrderCount += 1
-        self.levelRate = levelRate
+        self.levelRate = 0
         orderID = str(self.limitOrderCount)
         order = VtOrderData()
         order.vtSymbol = vtSymbol
@@ -1199,7 +1203,7 @@ class BacktestingEngine(object):
 
         for setting in settingList:
             self.clearBacktestingResult()  # 清空策略的所有状态（指如果多次运行同一个策略产生的状态）
-            l.append(pool.apply_async(optimize, (strategyClass, setting,
+            l.append(pool.apply_async(optimize, (self.__class__, strategyClass, setting,
                                                  targetName, self.mode, 
                                                  self.startDate, self.initHours, self.endDate,
                                                  self.slippage, self.rate, self.size, self.priceTick,
@@ -1661,12 +1665,12 @@ def formatNumber(n):
     return format(rn, ',')  # 加上千分符
 
 #----------------------------------------------------------------------
-def optimize(strategyClass, setting, targetName,
+def optimize(backtestEngineClass, strategyClass, setting, targetName,
              mode, startDate, initHours, endDate,
              slippage, rate, size, priceTick,
              dbName, symbol):
     """多进程优化时跑在每个进程中运行的函数"""
-    engine = BacktestingEngine()
+    engine = backtestEngineClass()
     engine.setBacktestingMode(mode)
     engine.setStartDate(startDate, initHours)
     engine.setEndDate(endDate)
