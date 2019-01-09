@@ -61,41 +61,25 @@ class MainEngine(object):
         gatewayTypeMap = {}
         
         # 创建接口实例
-        if type(gatewayName) == list:
-            for i in range(len(gatewayName)):
-                self.gatewayDict[gatewayName[i]] = gatewayModule.gatewayClass(self.eventEngine, 
-                                                                    gatewayName[i])
-            
-                # 设置接口轮询
-                if gatewayModule.gatewayQryEnabled:
-                    self.gatewayDict[gatewayName[i]].setQryEnabled(gatewayModule.gatewayQryEnabled)
-                        
-                # 保存接口详细信息
-                d = {
-                    'gatewayName': gatewayModule.gatewayName[i],
-                    'gatewayDisplayName': gatewayModule.gatewayDisplayName[i],
-                    'gatewayType': gatewayModule.gatewayType
-                }
-                self.gatewayDetailList.append(d)
-        else:
-            self.gatewayDict[gatewayName] = gatewayModule.gatewayClass(self.eventEngine, 
-                                                                    gatewayName)
-            
+        for name in gatewayName:
+            self.gatewayDict[name] = gatewayModule.gatewayClass(self.eventEngine, 
+                                                                name)
+        
             # 设置接口轮询
             if gatewayModule.gatewayQryEnabled:
-                self.gatewayDict[gatewayName].setQryEnabled(gatewayModule.gatewayQryEnabled)
+                self.gatewayDict[name].setQryEnabled(gatewayModule.gatewayQryEnabled)
                     
             # 保存接口详细信息
             d = {
-                'gatewayName': gatewayModule.gatewayName,
-                'gatewayDisplayName': gatewayModule.gatewayDisplayName,
+                'gatewayName': gatewayModule.name,
+                'gatewayDisplayName': gatewayModule.gatewayDisplayName[i],
                 'gatewayType': gatewayModule.gatewayType
             }
             self.gatewayDetailList.append(d)
         
-        for i in range(len(self.gatewayDetailList)):
-            s = self.gatewayDetailList[i]['gatewayName'].split('_connect.json')[0]
-            gatewayTypeMap[s]=self.gatewayDetailList[i]['gatewayType']
+        for gateway in self.gatewayDetailList:
+            s = gateway['gatewayName'].split('_connect.json')[0]
+            gatewayTypeMap[s] = gateway['gatewayType']
             
         path = os.getcwd()
         # 遍历当前目录下的所有文件
@@ -232,13 +216,6 @@ class MainEngine(object):
         if gateway:
             data = gateway.loadHistoryBar(vtSymbol,type_,size,since)
         return data
-
-    def qryAllOrders(self, vtSymbol,orderId,status=None):
-        contract = self.getContract(vtSymbol)
-        gatewayName = contract.gatewayName
-        gateway = self.getGateway(gatewayName)
-        if gateway:
-            gateway.qryAllOrders(vtSymbol,orderId,status)
 
     #----------------------------------------------------------------------
     def exit(self):
