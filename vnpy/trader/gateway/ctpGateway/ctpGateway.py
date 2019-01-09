@@ -964,11 +964,14 @@ class CtpTdApi(TdApi):
             pos.vtPositionName = VN_SEPARATOR.join([pos.symbol, pos.direction])
 
         # 针对上期所持仓的今昨分条返回（有昨仓、无今仓），读取昨仓数据
-        # if data['YdPosition'] and not data['TodayPosition']:
-        if data['Position'] and data['TodayPosition']:
-            pos.ydPosition = int(data['YdPosition'])
-        elif data['YdPosition'] and not data['TodayPosition']:
-            pos.ydPosition = int(data['Position'])
+        pos.ydPosition = 0
+        exchange = self.symbolExchangeDict.get(pos.symbol, EXCHANGE_UNKNOWN)
+        if exchange == EXCHANGE_SHFE:
+            if data['YdPosition'] and not data['TodayPosition']:
+                pos.ydPosition = data['Position']
+        # 否则基于总持仓和今持仓来计算昨仓数据
+        else:
+            pos.ydPosition = data['Position'] - data['TodayPosition']
 
         # 计算成本
         size = self.symbolSizeDict[pos.symbol]
@@ -1104,11 +1107,19 @@ class CtpTdApi(TdApi):
 
         # 推送
         self.gateway.onContract(contract)
-        self.contractsList.append(contract.symbol+'.'+contract.exchange)
-        a = {"contracts":self.contractsList}
+        # 缓存合约信息，策略可以根据contract信息调整下单行为
+        contract_info = {}
+        contract_info['Exchange'] = contract.exchange
+        contract_info['VolumeMultiple'] = contract.size
+        contract_info['PriceTick'] = contract.priceTick
+        contract_info['StrikePrice'] = contract.strikePrice
+        contract_info['LongMarginRatio'] = data['LongMarginRatio']
+        contract_info['ShortMarginRatio'] = data['ShortMarginRatio']
+        
+        self.contractsDict.update({contract.vtSymbol:contract_info})
 
-        with open(getTempPath('contractList.json'),'w') as f:
-            json.dump(a,f,indent=4, ensure_ascii=False)
+        with open(getTempPath('contract_info.json'),'w') as f:
+            json.dump(self.contractsDict,f,indent=4, ensure_ascii=False)
 
         # 缓存合约代码和交易所映射
         symbolExchangeDict[contract.symbol] = contract.exchange
@@ -1746,6 +1757,15 @@ class CtpTdApi(TdApi):
         req['BrokerID'] = self.brokerID
         req['InvestorID'] = self.userID
         self.reqQryInvestorPosition(req, self.reqID)
+
+    #---------------------------------------------------------------------
+    def qryOrder(self):
+        """查询订单"""
+        self.reqID +=1
+        req={}
+        req['BrokerID'] = self.brokerID
+        req['InvestorID'] = self.userID
+        self.reqQryOrder(req, self.reqID)
 
     #----------------------------------------------------------------------
     def sendOrder(self, orderReq):
