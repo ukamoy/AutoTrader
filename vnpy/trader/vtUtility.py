@@ -6,6 +6,7 @@ import pandas as  pd
 from datetime import datetime, time, timedelta
 
 from vnpy.trader.vtObject import VtBarData
+DATETIME_FORMAT = '%Y%m%d %H:%M:%S'
 class BarGenerator(object):
     """
     K线合成器，支持：
@@ -307,10 +308,6 @@ class BarGenerator(object):
         self.onBar(self.bar)
         self.bar = None
 
-    def updateHalfBar(self,Bar):
-        """非完整Bar的合并"""
-        pass
-
 # ########################################################################
 class ArrayManager(object):
     """
@@ -331,12 +328,16 @@ class ArrayManager(object):
     def updateBar(self, bar):
         """更新K线"""
         if bar:  # 如果是实盘K线
+            if not self.finished:
+                self.finished = True
+                return
+
             self.count += 1
             if not self.inited and self.count >= self.size:
                 self.inited = True
 
             self.array['datetime'][0:self.size - 1] = self.array['datetime'][1:self.size]
-            self.array['datetime'][-1] = bar.datetime.strftime('%Y%m%d %H:%M:%S')
+            self.array['datetime'][-1] = bar.datetime.strftime(DATETIME_FORMAT)
 
             self.array['open'][0:self.size - 1] = self.array['open'][1:self.size]
             self.array['open'][-1] = float(bar.open)
@@ -352,7 +353,29 @@ class ArrayManager(object):
 
             self.array['volume'][0:self.size - 1] = self.array['volume'][1:self.size]
             self.array['volume'][-1] = float(bar.volume)
+    
+    # ----------------------------------------------------------------------
+    def updateArray(self, bar):
+        if bar:  # 如果是实盘K线
+            if self.finished:
+                self.array['datetime'][0:self.size - 1] = self.array['datetime'][1:self.size]
+                self.array['open'][0:self.size - 1] = self.array['open'][1:self.size]
+                self.array['high'][0:self.size - 1] = self.array['high'][1:self.size]
+                self.array['low'][0:self.size - 1] = self.array['low'][1:self.size]
+                self.array['close'][0:self.size - 1] = self.array['close'][1:self.size]
+                self.array['volume'][0:self.size - 1] = self.array['volume'][1:self.size]
 
+                self.count +=1
+                if not self.inited and self.count >= self.size:
+                    self.inited = True
+                self.array['datetime'][-1] = bar.datetime.strftime(DATETIME_FORMAT)
+                self.array['open'][-1] = float(bar.open)
+
+            self.finished = False
+            self.array['high'][-1] = max(float(bar.high),self.array['high'][-1])
+            self.array['low'][-1] = min(float(bar.low),self.array['low'][-1])
+            self.array['close'][-1] = float(bar.close)
+            self.array['volume'][-1] += float(bar.volume)
     # ----------------------------------------------------------------------
     @property
     def open(self):
@@ -388,7 +411,7 @@ class ArrayManager(object):
         """获取时间戳序列"""
         return self.array['datetime']
 
-    def DataFrame(self):
+    def to_dataframe(self):
         """提供DataFrame"""
         return pd.DataFrame(self.array)
 
