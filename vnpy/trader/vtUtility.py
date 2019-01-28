@@ -133,7 +133,8 @@ class BarGenerator(object):
                 self.xminBar.datetime = bar.datetime.replace(second=0, microsecond=0)  # 将秒和微秒设为0
                 self.xminBar.date = bar.datetime.strftime('%Y%m%d')
                 self.xminBar.time = bar.datetime.strftime('%H:%M:%S.%f')
-                self.BarDone = 0
+                diff = bar.datetime.minute % self.xmin
+                self.BarDone = self.xmin-diff
 
             self.xminBar.high = max(self.xminBar.high, bar.high)
             self.xminBar.low = min(self.xminBar.low, bar.low)
@@ -301,12 +302,6 @@ class BarGenerator(object):
         # if (Candle.datetime + timedelta(days=3)).strftime('%m') != self.intraMonth:  # 强制月底收盘切断
         #     self.onMCandle(self.MonthCandle)
         #     self.MonthCandle = None
-
-    #--------------------------            
-    def generate(self):
-        """手动强制立即完成K线合成"""
-        self.onBar(self.bar)
-        self.bar = None
 
 # ########################################################################
 class ArrayManager(object):
