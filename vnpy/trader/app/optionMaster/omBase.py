@@ -1,7 +1,10 @@
 # encoding: UTF-8
 
+from __future__ import division
+
 from copy import copy
 from collections import OrderedDict
+from math import log1p
 
 from vnpy.trader.vtConstant import *
 from vnpy.trader.vtObject import VtTickData
@@ -13,6 +16,13 @@ from .omDate import getTimeToMaturity
 CALL = 1
 PUT = -1
 
+OM_DB_NAME = 'VnTrader_OptionMaster_Db'
+
+# 事件定义
+EVENT_OM_LOG = 'eOmLog'
+EVENT_OM_STRATEGY = 'eOmStrategy.'
+EVENT_OM_STRATEGYLOG = 'eOmStrategyLog'
+
 
 ########################################################################
 class OmInstrument(VtTickData):
@@ -23,7 +33,10 @@ class OmInstrument(VtTickData):
         """Constructor"""
         super(OmInstrument, self).__init__()
         
+        self.tickInited = False
+        
         # 初始化合约信息
+        self.symbol = contract.symbol
         self.exchange = contract.exchange
         self.vtSymbol = contract.vtSymbol
     
@@ -35,10 +48,15 @@ class OmInstrument(VtTickData):
         self.midPrice = EMPTY_FLOAT
         
         # 持仓数据
-        self.longPos = detail.longPos
-        self.shortPos = detail.shortPos
-        self.netPos = self.longPos - self.shortPos
+        self.longPos = 0
+        self.shortPos = 0
+        self.netPos = 0
         
+        if detail:
+            self.longPos = detail.longPos
+            self.shortPos = detail.shortPos
+            self.netPos = self.longPos - self.shortPos
+            
     #----------------------------------------------------------------------
     def newTick(self, tick):
         """行情更新"""
@@ -58,6 +76,7 @@ class OmInstrument(VtTickData):
         self.askPrice1 = tick.askPrice1
         self.bidVolume1 = tick.bidVolume1
         self.askVolume1 = tick.askVolume1
+        self.midPrice = (self.bidPrice1 + self.askPrice1) / 2
 
     #----------------------------------------------------------------------
     def newTrade(self, trade):
@@ -95,16 +114,24 @@ class OmUnderlying(OmInstrument):
     """标的物"""
 
     #----------------------------------------------------------------------
-    def __init__(self, contract, chainList):
+    def __init__(self, contract, detail, chainList=None):
         """Constructor"""
-        super(OmUnderlying, self).__init__(contract)
+        super(OmUnderlying, self).__init__(contract, detail)
+        
+        # 标的类型
+        self.productClass = contract.productClass
         
         # 以该合约为标的物的期权链字典
-        self.chainDict = OrderedDict((chain.symbol, chain) for chain in chainList)
+        self.chainDict = OrderedDict()
         
         # 希腊值
         self.theoDelta = EMPTY_FLOAT    # 理论delta值
         self.posDelta = EMPTY_FLOAT     # 持仓delta值
+        
+    #----------------------------------------------------------------------
+    def addChain(self, chain):
+        """添加以该合约为标的的期权链"""
+        self.chainDict[chain.symbol] = chain
         
     #----------------------------------------------------------------------
     def newTick(self, tick):
@@ -114,7 +141,7 @@ class OmUnderlying(OmInstrument):
         self.theoDelta = self.size * self.midPrice / 100
         
         # 遍历推送自己的行情到期权链中
-        for chain in self.chainList:
+        for chain in self.chainDict.values():
             chain.newUnderlyingTick()
 
     #----------------------------------------------------------------------
@@ -126,7 +153,7 @@ class OmUnderlying(OmInstrument):
     #----------------------------------------------------------------------
     def calculatePosGreeks(self):
         """计算持仓希腊值"""
-        self.posDelta = self.theoDelta * self.netPos    
+        self.posDelta = self.theoDelta * self.netPos
 
 
 ########################################################################
@@ -134,9 +161,9 @@ class OmOption(OmInstrument):
     """期权"""
 
     #----------------------------------------------------------------------
-    def __init__(self, contract, underlying, model, r):
+    def __init__(self, contract, detail, underlying, model, r):
         """Constructor"""
-        super(OmOption, self).__init__(contract)
+        super(OmOption, self).__init__(contract, detail)
         
         # 期权属性
         self.underlying = underlying    # 标的物对象
@@ -180,16 +207,21 @@ class OmOption(OmInstrument):
         self.chain = None
         
     #----------------------------------------------------------------------
-    def calculateImpv(self):
+    def calculateOptionImpv(self):
         """计算隐含波动率"""
         underlyingPrice = self.underlying.midPrice
-        if not underlyingPrice:
+        if not underlyingPrice or not self.t:
             return        
         
         self.askImpv = self.calculateImpv(self.askPrice1, underlyingPrice, self.k,
                                           self.r, self.t, self.cp)
+        if self.askImpv > 1:        # 正常情况下波动率不应该超过100%
+            self.askImpv = 0.01     # 若超过则大概率为溢出，调整为1%
+            
         self.bidImpv = self.calculateImpv(self.bidPrice1, underlyingPrice, self.k,
                                           self.r, self.t, self.cp)        
+        if self.bidImpv > 1:
+            self.bidImpv = 0.01
         self.midImpv = (self.askImpv + self.bidImpv) / 2
     
     #----------------------------------------------------------------------
@@ -199,32 +231,37 @@ class OmOption(OmInstrument):
         if not underlyingPrice or not self.pricingImpv:
             return
         
-        self.theoPrice, self.theoDelta, self.theoGamma, self.theoTheta, self.theoVega = self.calculateGreeks(underlyingPrice, 
-                                                                                                             self.k, 
-                                                                                                             self.r, 
-                                                                                                             self.t, 
-                                                                                                             self.pricingImpv, 
-                                                                                                             self.cp)
+        self.theoPrice, delta, gamma, theta, vega = self.calculateGreeks(underlyingPrice, 
+                                                                         self.k, 
+                                                                         self.r, 
+                                                                         self.t, 
+                                                                         self.pricingImpv, 
+                                                                         self.cp)
+        
+        self.theoDelta = delta * self.size
+        self.theoGamma = gamma * self.size
+        self.theoTheta = theta * self.size
+        self.theoVega = vega * self.size
         
     #----------------------------------------------------------------------
     def calculatePosGreeks(self):
         """计算持仓希腊值"""
-        self.posValue = self.theoPrice * self.netPos
+        self.posValue = self.theoPrice * self.netPos * self.size
         self.posDelta = self.theoDelta * self.netPos
         self.posGamma = self.theoGamma * self.netPos
         self.posTheta = self.theoTheta * self.netPos
-        self.posVega = self.theoVega * self.netPos                
+        self.posVega = self.theoVega * self.netPos
     
     #----------------------------------------------------------------------
     def newTick(self, tick):
         """行情更新"""
         super(OmOption, self).newTick(tick)
-        self.calculateImpv()
+        self.calculateOptionImpv()
     
     #----------------------------------------------------------------------
     def newUnderlyingTick(self):
         """标的行情更新"""
-        self.calculateImpv()
+        self.calculateOptionImpv()
         self.calculateTheoGreeks()
         self.calculatePosGreeks()
         
@@ -233,7 +270,17 @@ class OmOption(OmInstrument):
         """成交更新"""
         super(OmOption, self).newTrade(trade)
         self.calculatePosGreeks()
-
+        
+    #----------------------------------------------------------------------
+    def setUnderlying(self, underlying):
+        """设置标的物对象"""
+        self.underlying = underlying
+    
+    #----------------------------------------------------------------------
+    def setR(self, r):
+        """设置折现率"""
+        self.r = r
+ 
 
 ########################################################################
 class OmChain(object):
@@ -283,7 +330,7 @@ class OmChain(object):
         self.posVega = 0
         
         # 遍历汇总
-        for option in list(self.optionDict.values()):
+        for option in self.optionDict.values():
             self.longPos += option.longPos
             self.shortPos += option.shortPos
             
@@ -304,7 +351,7 @@ class OmChain(object):
     #----------------------------------------------------------------------
     def newUnderlyingTick(self):
         """期货行情更新"""
-        for option in list(self.optionDict.values()):
+        for option in self.optionDict.values():
             option.newUnderlyingTick()
             
         self.calculatePosGreeks()
@@ -337,6 +384,41 @@ class OmChain(object):
         self.posGamma = self.posGamma - oldPosGamma + option.posGamma
         self.posTheta = self.posTheta - oldPosTheta + option.posTheta
         self.posVega = self.posVega - oldPosVega + option.posVega
+    
+    #----------------------------------------------------------------------
+    def adjustR(self):
+        """调整折现率（r）"""
+        l = []
+        callList = self.callDict.values()
+        putList = self.putDict.values()
+        
+        # 通过计算期权链所有PCP的平价利率
+        for n, call in enumerate(callList):
+            put = putList[n]
+            
+            # 如果标的为期货，则不进行调整
+            if call.underlying.productClass == PRODUCT_FUTURES:
+                return
+            
+            # 如果有任意中间价为0，则忽略该PCP
+            if (not call.underlying.midPrice or
+                not put.midPrice or 
+                not call.midPrice or
+                not call.k or
+                not call.t):
+                continue
+            
+            temp = (call.underlying.midPrice + put.midPrice - call.midPrice) / call.k
+            r = log1p(temp-1) / (-call.t)
+            l.append(r)
+        
+        # 求平均值来计算拟合折现率
+        if not l:
+            return
+        
+        self.r = sum(l)/len(l)
+        for option in self.optionDict.values():
+            option.setR(r)
 
 
 ########################################################################
@@ -344,14 +426,16 @@ class OmPortfolio(object):
     """持仓组合"""
 
     #----------------------------------------------------------------------
-    def __init__(self, name, underlyingList, chainList):
+    def __init__(self, name, model, underlyingList, chainList):
         """Constructor"""
         self.name = name
+        self.model = model
         
         # 原始容器
         self.underlyingDict = OrderedDict()
         self.chainDict = OrderedDict()
         self.optionDict = {}
+        self.instrumentDict = {}
         
         for underlying in underlyingList:
             self.underlyingDict[underlying.symbol] = underlying
@@ -360,6 +444,9 @@ class OmPortfolio(object):
             self.chainDict[chain.symbol] = chain
             self.optionDict.update(chain.callDict)
             self.optionDict.update(chain.putDict)
+        
+        self.instrumentDict.update(self.underlyingDict)
+        self.instrumentDict.update(self.optionDict)
         
         # 持仓数据
         self.longPos = EMPTY_INT
@@ -385,10 +472,10 @@ class OmPortfolio(object):
         self.posTheta = 0
         self.posVega = 0
         
-        for underlying in self.underlyingList:
+        for underlying in self.underlyingDict.values():
             self.posDelta += underlying.posDelta
         
-        for chain in self.chainList:
+        for chain in self.chainDict.values():
             self.longPos += chain.longPos
             self.shortPos += chain.shortPos
             
@@ -427,3 +514,10 @@ class OmPortfolio(object):
             underlying = self.underlyingDict[symbol]
             underlying.newTrade(trade)
             self.calculatePosGreeks()
+    
+    #----------------------------------------------------------------------
+    def adjustR(self):
+        """调整折现率"""
+        for chain in self.chainDict.values():
+            chain.adjustR()
+        
