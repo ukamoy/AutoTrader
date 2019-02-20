@@ -1,14 +1,6 @@
 # encoding: UTF-8
 
-# 重载sys模块，设置默认字符串编码方式为utf8
-# try:
-#     reload         # Python 2
-# except NameError:  # Python 3
-#     from importlib import reload
 import sys
-# reload(sys)
-# sys.setdefaultencoding('utf8')
-
 # 判断操作系统
 import platform
 system = platform.system()
@@ -65,7 +57,6 @@ def main():
 
     # 在主线程中启动Qt事件循环
     sys.exit(qApp.exec_())
-
 
 if __name__ == '__main__':
     main()

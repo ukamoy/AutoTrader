@@ -1,0 +1,51 @@
+{"ENGINE_SETTINGS" :{
+    "setBacktestingMode":"bar",
+    "setDatabase": "VnTrader_1Min_Db",
+    "setStartDate":"20180615 00:00",
+    "setEndDate" : "20190115 23:59",
+    "setSlippage" : 0.002,
+    "setRate" : 0.0005
+    },
+"STRATEGY_SETTING" : {
+    "strategy_filename":"stdBreakStrategy219",
+    "strategy_modulename":"hlBreakBtcStrategy",
+    "symbolList":["eos.usd.q:okef"]},
+"OPT_TARGET" : "sharpeRatio",
+"TASK_LISTS" : [ 
+    {"task_name":"task1_wvapPeriod", 
+        "pick_opt_param":[
+            {"param_name":"wvapPeriod", "range":[40, 160, 10]},
+            {"param_name":"wvapMaPeriod","range":[20, 100, 10]}
+            ]},
+    {"task_name":"task2_bBand", 
+        "pick_opt_param":[
+            {"param_name":"bandPeriod", "range":[10, 60, 10]},
+            {"param_name":"nVol","range":[0.5, 4, 0.5]}
+            ]},
+    {"task_name":"task3_adx", 
+        "pick_opt_param":[
+            {"param_name":"adxPeriod", "range":[10, 80, 10]},
+            {"param_name":"adxLowThrehold", "range":[10, 26, 2]}
+            ]},
+    {"task_name":"task4_adx", 
+        "pick_opt_param":[
+            {"param_name":"adxHighThrehold", "range":[25, 55, 5]},
+            {"param_name":"adxMaxPeriod", "range":[5, 30, 5]}
+            ]},
+    {"task_name":"task5_VolThrehold", 
+        "pick_best_param":[
+            {"param_name":"lowVolThrehold", "range":[0.001, 0.003, 0.0005]},
+            {"param_name":"highVolThrehold","range":[ 0.01, 0.1, 0.01]}
+            ]},
+    {"task_name":"task6_stopControlTime", 
+        "pick_best_param":[
+            {"param_name":"stopControlTime", "range":[1, 10, 1]},
+            {"param_name":"trailingPct", "range":[0.01, 0.05, 0.01]}
+            ]},
+    {"task_name":"task7_positionControl", 
+        "pick_best_param":[
+            {"param_name":"addPct", "range":[0.002, 0.01, 0.002]},
+            {"param_name":"addMultipler", "range":[0.5, 2, 0.5]}
+            ]}
+    ]
+}
