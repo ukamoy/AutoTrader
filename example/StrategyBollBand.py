@@ -85,7 +85,7 @@ class BollBandsStrategy(CtaTemplate):
             for s in self.symbolList:
                 kline60[s] = self.loadHistoryBar(s, '60min',1000)[:-20]
                 kline15[s] = self.loadHistoryBar(s, '15min',1000)[:-80]
-                 kline1[s] = self.loadHistoryBar(s, '1min',1200)
+                kline1[s] = self.loadHistoryBar(s, '1min',1200)
             # 更新数据矩阵 (optional)
             for s in self.symbolList:
                 for bar in kline60[s]:

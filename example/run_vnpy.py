@@ -1,9 +1,5 @@
 # encoding: UTF-8
-
-# 重载sys模块，设置默认字符串编码方式为utf8
 import sys
-
-
 # 判断操作系统
 import platform
 system = platform.system()
@@ -20,14 +16,13 @@ from vnpy.trader.gateway import (okexGateway,huobiGateway,binanceGateway,ctpGate
 # 加载上层应用
 from vnpy.trader.app import (riskManager, 
                             ctaStrategy,
-                            #algoTrading,
+                            # algoTrading,
                             # dataRecorder,
                             # spreadTrading,
                             # optionMaster,
                             # jaqsService,
                             # rpcService
                             )
-
 
 #----------------------------------------------------------------------
 def main():
@@ -57,14 +52,12 @@ def main():
     # me.addApp(jaqsService)
     # me.addApp(rpcService)
 
-
     # 创建主窗口
     mw = MainWindow(me, ee)
     mw.showMaximized()
 
     # 在主线程中启动Qt事件循环
     sys.exit(qApp.exec_())
-
 
 if __name__ == '__main__':
     main()
