@@ -7,7 +7,7 @@
     "margin_token": 3,
     "sessionCount": 3,
     "trace": false,
-    "contracts":["EOS-USD-SWAP","BTC-USDT","eth_quarter"],
+    "symbols":["EOS-USD-SWAP","BTC-USDT","ETH-QUARTER"],
     "setQryEnabled":false,
     "setQryFreq":60,
     "note":""
