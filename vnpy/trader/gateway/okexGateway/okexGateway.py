@@ -1,43 +1,20 @@
-# encoding: UTF-8
-'''
-'''
-from __future__ import print_function
-
-import logging
 import os
 import json
-import sys
 import time
-import uuid
-from datetime import datetime, timedelta
-from copy import copy
-import pandas as pd
+from datetime import datetime, timezone, timedelta
 
+from vnpy.api.rest import RestClient, Request
+from vnpy.api.websocket import WebsocketClient
 from vnpy.trader.vtGateway import *
 from vnpy.trader.vtConstant import *
 from vnpy.trader.vtFunction import getJsonPath, getTempPath
-from .futures import OkexfRestApi, OkexfWebsocketApi
+from .future import OkexfRestApi, OkexfWebsocketApi 
 from .swap import OkexSwapRestApi, OkexSwapWebsocketApi
 from .spot import OkexSpotRestApi, OkexSpotWebsocketApi
+from .okutil import granularityMap
 
 REST_HOST = 'https://www.okex.com'
-WEBSOCKET_HOST_V3 = 'wss://real.okex.com:10442/ws/v3'
-
-# K线频率映射
-granularityMap = {}
-granularityMap['1min'] =60
-granularityMap['3min'] =180
-granularityMap['5min'] =300
-granularityMap['10min'] =600
-granularityMap['15min'] =900
-granularityMap['30min'] =1800
-granularityMap['60min'] =3600
-granularityMap['120min'] =7200
-granularityMap['240min'] =14400
-granularityMap['360min'] =21600
-granularityMap['720min'] =43200
-granularityMap['1day'] =86400
-granularityMap['1week'] =604800
+WEBSOCKET_HOST = 'wss://real.okex.com:10442/ws/v3'
 
 ########################################################################
 class OkexGateway(VtGateway):
@@ -49,26 +26,20 @@ class OkexGateway(VtGateway):
         super(OkexGateway, self).__init__(eventEngine, gatewayName)
         
         self.qryEnabled = False     # 是否要启动循环查询
-        self.localRemoteDict = {}   # localID:remoteID
-        self.orderDict = {}         # remoteID:order
 
         self.fileName = self.gatewayName + '_connect.json'
         self.filePath = getJsonPath(self.fileName, __file__)
-        
-        self.restFuturesApi = None
-        self.wsFuturesApi = None
-        self.restSwapApi = None
-        self.wsSwapApi = None
-        self.restSpotApi = None
-        self.wsSpotApi = None
 
-        self.contracts = []
-        self.swap_contracts = []
-        self.currency_pairs = []
+        self.apiKey = ''
+        self.apiSecret = ''
+        self.passphrase = ''
+
+        self.symbolTypeMap = {}
+        self.gatewayMap = {}
 
         self.orderID = 10000
         self.tradeID = 0
-        self.loginTime = 0
+        self.loginTime = int(datetime.now().strftime('%y%m%d%H%M%S')) * 100000
 
     #----------------------------------------------------------------------
     def connect(self):
@@ -76,10 +47,7 @@ class OkexGateway(VtGateway):
         try:
             f = open(self.filePath)
         except IOError:
-            log = VtLogData()
-            log.gatewayName = self.gatewayName
-            log.logContent = u'读取连接配置出错，请检查'
-            self.onLog(log)
+            self.writeLog(u"读取连接配置出错，请检查")
             return
 
         # 解析connect.json文件
@@ -87,48 +55,51 @@ class OkexGateway(VtGateway):
         f.close()
         
         try:
-            apiKey = str(setting['apiKey'])
-            apiSecret = str(setting['apiSecret'])
-            passphrase = str(setting['passphrase'])
+            self.apiKey = str(setting['apiKey'])
+            self.apiSecret = str(setting['apiSecret'])
+            self.passphrase = str(setting['passphrase'])
             sessionCount = int(setting['sessionCount'])
-            subscrib_symbols = setting['contracts']
+            subscrib_symbols = setting['symbols']
         except KeyError:
-            log = VtLogData()
-            log.gatewayName = self.gatewayName
-            log.logContent = u'%s连接配置缺少字段，请检查'%self.gatewayName
-            self.onLog(log)
+            self.writeLog(f"{self.gatewayName} 连接配置缺少字段，请检查")
             return
 
         # 记录订阅的交易品种类型
+        contract_list = []
+        swap_list = []
+        spot_list = []
         for symbol in subscrib_symbols:
-            if "week" in symbol or "quarter" in symbol:
-                self.contracts.append(symbol)                 
+            if "WEEK" in symbol or "QUARTER" in symbol:
+                self.symbolTypeMap[symbol] = "FUTURE"
+                contract_list.append(symbol)
             elif "SWAP" in symbol:
-                self.swap_contracts.append(symbol)
+                self.symbolTypeMap[symbol] = "SWAP"
+                swap_list.append(symbol)
             else:
-                self.currency_pairs.append(symbol)
+                self.symbolTypeMap[symbol] = "SPOT"
+                spot_list.append(symbol)
+
         # 创建行情和交易接口对象
         future_leverage = setting.get('future_leverage', 10)
         swap_leverage = setting.get('swap_leverage', 1)
-        margin_token = setting.get('margin_token',3)
+        margin_token = setting.get('margin_token', 3)
 
-        if len(self.contracts)>0:
-            self.restFuturesApi = OkexfRestApi(self)
-            self.restFuturesApi.connect(apiKey, apiSecret, passphrase, future_leverage, sessionCount)
-            self.wsFuturesApi = OkexfWebsocketApi(self)     
-            self.wsFuturesApi.connect(apiKey, apiSecret, passphrase)  
-        if len(self.swap_contracts)>0:
-            self.restSwapApi = OkexSwapRestApi(self)
-            self.restSwapApi.connect(apiKey, apiSecret, passphrase, swap_leverage, sessionCount)
-            self.wsSwapApi = OkexSwapWebsocketApi(self)
-            self.wsSwapApi.connect(apiKey, apiSecret, passphrase)
-        if len(self.currency_pairs):
-            self.restSpotApi = OkexSpotRestApi(self)
-            self.restSpotApi.connect(apiKey, apiSecret, passphrase, margin_token, sessionCount)
-            self.wsSpotApi = OkexSpotWebsocketApi(self)
-            self.wsSpotApi.connect(apiKey, apiSecret, passphrase)
+        # 实例化对应品种类别的API
+        gateway_type = set(self.symbolTypeMap.values())
+        if "FUTURE" in gateway_type:
+            restfutureApi = OkexfRestApi(self)
+            wsfutureApi = OkexfWebsocketApi(self)     
+            self.gatewayMap['FUTURE'] = {"REST":restfutureApi, "WS":wsfutureApi, "leverage":future_leverage, "symbols":contract_list}
+        if "SWAP" in gateway_type:
+            restSwapApi = OkexSwapRestApi(self)
+            wsSwapApi = OkexSwapWebsocketApi(self)
+            self.gatewayMap['SWAP'] = {"REST":restSwapApi, "WS":wsSwapApi, "leverage":swap_leverage, "symbols":swap_list}
+        if "SPOT" in gateway_type:
+            restSpotApi = OkexSpotRestApi(self)
+            wsSpotApi = OkexSpotWebsocketApi(self)
+            self.gatewayMap['SPOT'] = {"REST":restSpotApi, "WS":wsSpotApi, "leverage":margin_token, "symbols":spot_list}
 
-        self.loginTime = int(datetime.now().strftime('%y%m%d%H%M%S')) * self.orderID
+        self.connectSubGateway(sessionCount)
 
         setQryEnabled = setting.get('setQryEnabled', None)
         self.setQryEnabled(setQryEnabled)
@@ -137,70 +108,73 @@ class OkexGateway(VtGateway):
         self.initQuery(setQryFreq)
 
     #----------------------------------------------------------------------
+    def connectSubGateway(self, sessionCount):
+        for subGateway in self.gatewayMap.values():
+            subGateway["REST"].connect(REST_HOST, subGateway["leverage"], sessionCount)
+            subGateway["WS"].connect(WEBSOCKET_HOST)
+
     def subscribe(self, subscribeReq):
         """订阅行情"""
-        symbol = subscribeReq.symbol
-        if symbol in self.contracts:
-            self.wsFuturesApi.subscribe(symbol)
-        elif symbol in self.swap_contracts:
-            self.wsSwapApi.subscribe(symbol)
-        elif symbol in self.currency_pairs:
-            self.wsSpotApi.subscribe(symbol)
-        else:
-            print(self.gatewayName," does not have this symbol:",symbol)
-
+        # symbolType = self.symbolTypeMap.get(subscribeReq.symbol, None)
+        # if not symbolType:
+        #     self.writeLog(f"{self.gatewayName} does not have this symbol:{subscribeReq.symbol}")
+        # else:
+        #     self.gatewayMap[symbolType]["WS"].subscribe(subscribeReq.symbol)
+    
     #----------------------------------------------------------------------
     def sendOrder(self, orderReq):
         """发单"""
-        symbol = orderReq.symbol
-        self.orderID += 1
-        orderID = str(self.loginTime + self.orderID)
-        orderID = str(uuid.uuid5(uuid.NAMESPACE_DNS,orderID)).replace("-","")
-
-        if symbol in self.contracts:
-            return self.restFuturesApi.sendOrder(orderReq,orderID)
-        elif symbol in self.swap_contracts:
-            return self.restSwapApi.sendOrder(orderReq,orderID)
-        elif symbol in self.currency_pairs:
-            return self.restSpotApi.sendOrder(orderReq,orderID)
+        symbolType = self.symbolTypeMap.get(orderReq.symbol, None)
+        if not symbolType:
+            self.writeLog(f"{self.gatewayName} does not have this symbol:{orderReq.symbol}")
         else:
-            print(self.gatewayName," does not have this symbol:",symbol)
+            self.orderID += 1
+            order_id = symbolType + str(self.loginTime + self.orderID)
+            return self.gatewayMap[symbolType]["REST"].sendOrder(orderReq, order_id)
 
     #----------------------------------------------------------------------
     def cancelOrder(self, cancelOrderReq):
         """撤单"""
-        symbol = cancelOrderReq.symbol
-        if symbol in self.contracts:
-            self.restFuturesApi.cancelOrder(cancelOrderReq)
-        elif symbol in self.swap_contracts:
-            self.restSwapApi.cancelOrder(cancelOrderReq)
-        elif symbol in self.currency_pairs:
-            self.restSpotApi.cancelOrder(cancelOrderReq)
+        symbolType = self.symbolTypeMap.get(cancelOrderReq.symbol, None)
+        if not symbolType:
+            self.writeLog(f"{self.gatewayName} does not have this symbol:{cancelOrderReq.symbol}")
         else:
-            print(self.gatewayName," does not have this symbol:",symbol)
+            self.gatewayMap[symbolType]["REST"].cancelOrder(cancelOrderReq)
         
     # ----------------------------------------------------------------------
     def cancelAll(self, symbols=None, orders=None):
         """发单"""
-        return self.restFuturesApi.cancelAll(symbols=symbols, orders=orders)
+        ids = []
+        if not symbols:
+            symbols = list(self.symbolTypeMap.keys())
+        for sym in symbols:
+            symbolType = self.symbolTypeMap.get(sym, None)
+            vtOrderIDs = self.gatewayMap[symbolType]["REST"].cancelAll(symbol = sym, orders=orders)
+            ids.extend(vtOrderIDs)
+            
+        print("全部撤单结果", ids)
+        return ids
 
     # ----------------------------------------------------------------------
     def closeAll(self, symbols, direction=None):
         """撤单"""
-        return self.restFuturesApi.closeAll(symbols, direction=direction)
+        ids = []
+        if not symbols:
+            symbols = list(self.symbolTypeMap.keys())
+        for sym in symbols:
+            symbolType = self.symbolTypeMap.get(sym, None)
+            vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, direction=direction)
+            ids.extend(vtOrderIDs)
+
+        print("全部平仓结果", ids)
+        return ids
 
     #----------------------------------------------------------------------
     def close(self):
         """关闭"""
-        if self.restFuturesApi and self.wsFuturesApi:
-            self.restFuturesApi.stop()
-            self.wsFuturesApi.stop()
-        if self.restSwapApi and self.wsSwapApi:
-            self.restSwapApi.stop()
-            self.wsSwapApi.stop()
-        if self.restSpotApi and self.wsSpotApi:
-            self.restSpotApi.stop()
-            self.wsSpotApi.stop()
+        for gateway in self.gatewayMap.values():
+            gateway["REST"].stop()
+            gateway["WS"].stop()
     #----------------------------------------------------------------------
     def initQuery(self, freq = 60):
         """初始化连续查询"""
@@ -245,36 +219,124 @@ class OkexGateway(VtGateway):
     #----------------------------------------------------------------------
     def queryInfo(self):
         """"""
-        if self.restFuturesApi:
-            self.restFuturesApi.queryAccount()
-            self.restFuturesApi.queryPosition()
-            self.restFuturesApi.queryOrder() 
-        if self.restSwapApi:
-            self.restSwapApi.queryAccount()
-            self.restSwapApi.queryPosition()
-            self.restSwapApi.queryOrder() 
-        if self.restSpotApi:
-            self.restSpotApi.queryAccount()
-            self.restSpotApi.queryOrder() 
+        for subGateway in self.gatewayMap.values():
+            subGateway["REST"].queryAccount()
+            subGateway["REST"].queryPosition()
+            subGateway["REST"].queryOrder()
 
     def initPosition(self,vtSymbol):
         symbol = vtSymbol.split(VN_SEPARATOR)[0]
-        if symbol in self.contracts:
-            self.restFuturesApi.queryPosition()
-        elif symbol in self.swap_contracts:
-            self.restSwapApi.queryPosition()
-        elif symbol in self.currency_pairs:
-            self.restSpotApi.queryAccount()
+        symbolType = self.symbolTypeMap.get(symbol, None)
+        if not symbolType:
+            self.writeLog(f"{self.gatewayName} does not have this symbol:{symbol}")
         else:
-            print(self.gatewayName," does not have this symbol:", symbol)
+            self.gatewayMap[symbolType]["REST"].queryMonoPosition(symbol)
+            self.gatewayMap[symbolType]["REST"].queryMonoAccount(symbol)
 
-    def qryAllOrders(self,vtSymbol,order_id,status=None):
+    def qryAllOrders(self, vtSymbol, order_id, status=None):
         pass
 
-    def loadHistoryBar(self,vtSymbol,type_,size=None,since=None,end=None):
-        if vtSymbol in self.contracts:
-            return self.restFuturesApi.loadHistoryBarV1(vtSymbol,type_,size,since,end)
-        elif vtSymbol in self.swap_contracts:
-            return self.restSwapApi.loadHistoryBarV3(vtSymbol,granularityMap[type_],size,since,end)
-        elif vtSymbol in self.currency_pairs:
-            return self.restSpotApi.loadHistoryBarV3(vtSymbol,granularityMap[type_],size,since,end)
+    def loadHistoryBar(self, vtSymbol, type_, size=None, since=None, end=None):
+        import pandas as pd
+        symbol = vtSymbol.split(VN_SEPARATOR)[0]
+        symbolType = self.symbolTypeMap.get(symbol, None)
+        granularity = granularityMap[type_]
+
+        if not symbolType:
+            self.writeLog(f"{self.gatewayName} does not have this symbol:{symbol}")
+            return []
+        else:
+            subGateway = self.gatewayMap[symbolType]["REST"]
+
+        if end:
+            end = datetime.utcfromtimestamp(datetime.timestamp(datetime.strptime(end,'%Y%m%d')))
+        else:
+            end = datetime.utcnow()
+
+        if since:
+            start = datetime.timestamp(datetime.strptime(since,'%Y%m%d'))
+            bar_count = (end -start).total_seconds()/ granularity
+
+        if size:
+            bar_count = size
+
+        req = {"granularity":granularity}
+
+        result = pd.DataFrame([])
+        loop = min(10, int(bar_count // 200 + 1))
+        for i in range(loop):
+            rotate_end = end.isoformat().split('.')[0]+'Z'
+            rotate_start = end - timedelta(seconds = granularity * 200)
+            if (i+1) == loop:
+                rotate_start = end - timedelta(seconds = granularity * (bar_count % 200))
+            rotate_start = rotate_start.isoformat().split('.')[0]+'Z'
+
+            req["start"] = rotate_start
+            req["end"] = rotate_end
+            data = subGateway.loadHistoryBar(REST_HOST, symbol, req)
+
+            end = datetime.strptime(rotate_start, "%Y-%m-%dT%H:%M:%SZ")
+            df = pd.concat([result, data])
+
+        df["datetime"] = df["time"].map(lambda x: datetime.strptime(x, ISO_DATETIME_FORMAT).replace(tzinfo=timezone(timedelta())))
+        df["datetime"] = df["datetime"].map(lambda x: datetime.fromtimestamp(x.timestamp()))
+        df[['open','high','low','close','volume']] = df[['open','high','low','close','volume']].applymap(lambda x: float(x))
+        df = df[["datetime", "open", "high", "low", "close", "volume"]]
+        df.sort_values(by=['datetime'], axis = 0, ascending =True, inplace = True)
+        return df
+
+    def writeLog(self, content):
+        """发出日志"""
+        log = VtLogData()
+        log.gatewayName = self.gatewayName
+        log.logContent = content
+        self.onLog(log)
+    
+    def newOrderObject(self, data):
+        order = VtOrderData()
+        order.gatewayName = self.gatewayName
+        order.symbol = data['instrument_id']
+        order.exchange = 'OKEX'
+        order.vtSymbol = VN_SEPARATOR.join([order.symbol, order.gatewayName])
+
+        if data['client_oid']:
+            order.orderID = data['client_oid']
+        else:
+            order.orderID = str(data['order_id'])
+            self.writeLog(f"order by other source, symbol:{order.symbol}, exchange_id: {order.orderID}")
+
+        order.vtOrderID = VN_SEPARATOR.join([self.gatewayName, order.orderID])
+        order.price = data['price']
+        order.tradedVolume = 0
+        order.orderDatetime = datetime.strptime(data['timestamp'], ISO_DATETIME_FORMAT)
+        order.orderTime = order.orderDatetime.strftime('%Y%m%d %H:%M:%S')
+        return order
+
+    def newTradeObject(self, order):
+        self.tradeID += 1
+        trade = VtTradeData()
+        trade.gatewayName = order.gatewayName
+        trade.symbol = order.symbol
+        trade.exchange = order.exchange
+        trade.vtSymbol = order.vtSymbol
+        
+        trade.orderID = order.orderID
+        trade.vtOrderID = order.vtOrderID
+        trade.tradeID = str(self.tradeID)
+        trade.vtTradeID = VN_SEPARATOR.join([self.gatewayName, trade.tradeID])
+        
+        trade.direction = order.direction
+        trade.offset = order.offset
+        trade.volume = order.thisTradedVolume
+        trade.price = order.price_avg
+        trade.tradeDatetime = datetime.now()
+        trade.tradeTime = trade.tradeDatetime.strftime('%Y%m%d %H:%M:%S')
+        self.onTrade(trade)
+
+    def convertDatetime(self, timestring):
+        dt = datetime.strptime(timestring, ISO_DATETIME_FORMAT)
+        dt = dt.replace(tzinfo=timezone(timedelta()))
+        local_dt = datetime.fromtimestamp(dt.timestamp())
+        date_string = local_dt.strftime('%Y%m%d')
+        time_string = local_dt.strftime('%H:%M:%S.%f')
+        return local_dt, date_string, time_string
