@@ -8,9 +8,6 @@ from collections import OrderedDict
 from datetime import datetime
 from copy import copy
 
-# from pymongo import MongoClient, ASCENDING
-# from pymongo.errors import ConnectionFailure
-
 from vnpy.event import Event
 from vnpy.trader.vtGlobal import globalSetting
 from vnpy.trader.vtEvent import *
@@ -18,6 +15,8 @@ from vnpy.trader.vtGateway import *
 from vnpy.trader.language import text
 from vnpy.trader.vtFunction import getTempPath
 
+# from pymongo import MongoClient, ASCENDING
+# from pymongo.errors import ConnectionFailure
 
 ########################################################################
 class MainEngine(object):
@@ -61,7 +60,7 @@ class MainEngine(object):
         gatewayTypeMap = {}
         
         # 创建接口实例
-        for name in gatewayName:
+        for idx, name in enumerate(gatewayName):
             self.gatewayDict[name] = gatewayModule.gatewayClass(self.eventEngine, 
                                                                 name)
         
@@ -72,14 +71,14 @@ class MainEngine(object):
             # 保存接口详细信息
             d = {
                 'gatewayName': gatewayModule.name,
-                'gatewayDisplayName': gatewayModule.gatewayDisplayName[i],
+                'gatewayDisplayName': gatewayModule.gatewayDisplayName[idx],
                 'gatewayType': gatewayModule.gatewayType
             }
             self.gatewayDetailList.append(d)
         
         for gateway in self.gatewayDetailList:
-            s = gateway['gatewayName'].split('_connect.json')[0]
-            gatewayTypeMap[s] = gateway['gatewayType']
+            gatewayName, base_string = gateway['gatewayName'].split('_connect.json')
+            gatewayTypeMap[gatewayName] = gateway['gatewayType']
             
         path = os.getcwd()
         # 遍历当前目录下的所有文件
@@ -173,11 +172,12 @@ class MainEngine(object):
         if gateway:
             gateway.cancelOrder(cancelOrderReq)   
 
-    def batchCancelOrder(self,cancelOrderReqList,gatewayName):
-        gateway = self.getGateway(gatewayName)
-        
-        if gateway:
-            gateway.batchCancelOrder(cancelOrderReqList)  
+    def batchCancelOrder(self, vtSymbol, ids):
+        contract = self.getContract(vtSymbol)
+        if contract:
+            gateway = self.getGateway(contract.gatewayName)
+            if gateway:
+                gateway.cancelAll([vtSymbol], ids)
   
     #----------------------------------------------------------------------
     def qryAccount(self, gatewayName):

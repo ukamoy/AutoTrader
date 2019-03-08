@@ -142,32 +142,22 @@ class OkexGateway(VtGateway):
             self.gatewayMap[symbolType]["REST"].cancelOrder(cancelOrderReq)
         
     # ----------------------------------------------------------------------
-    def cancelAll(self, symbols=None, orders=None):
-        """发单"""
-        ids = []
-        if not symbols:
-            symbols = list(self.symbolTypeMap.keys())
-        for sym in symbols:
-            symbolType = self.symbolTypeMap.get(sym, None)
-            vtOrderIDs = self.gatewayMap[symbolType]["REST"].cancelAll(symbol = sym, orders=orders)
-            ids.extend(vtOrderIDs)
-            
-        print("全部撤单结果", ids)
-        return ids
+    def batch_cancel_order(self, symbol=None, orderIDs=None):
+        """批量撤单"""
+        symbolType = self.symbolTypeMap.get(symbol, None)
+        self.gatewayMap[symbolType]["REST"].batch_cancel_order(symbol = symbol, orderIDs=orderIDs)
 
     # ----------------------------------------------------------------------
-    def closeAll(self, symbols, direction=None):
+    def closeAll(self, symbols, direction=None, standard_token = "USDT"):
         """撤单"""
-        ids = []
         if not symbols:
             symbols = list(self.symbolTypeMap.keys())
         for sym in symbols:
             symbolType = self.symbolTypeMap.get(sym, None)
-            vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, direction=direction)
-            ids.extend(vtOrderIDs)
-
-        print("全部平仓结果", ids)
-        return ids
+            if symbolType == "SPOT":
+                vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, standard_token = standard_token)
+            else:
+                vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, direction = direction)
 
     #----------------------------------------------------------------------
     def close(self):
@@ -262,7 +252,7 @@ class OkexGateway(VtGateway):
 
         req = {"granularity":granularity}
 
-        result = pd.DataFrame([])
+        df = pd.DataFrame([])
         loop = min(10, int(bar_count // 200 + 1))
         for i in range(loop):
             rotate_end = end.isoformat().split('.')[0]+'Z'
@@ -276,12 +266,12 @@ class OkexGateway(VtGateway):
             data = subGateway.loadHistoryBar(REST_HOST, symbol, req)
 
             end = datetime.strptime(rotate_start, "%Y-%m-%dT%H:%M:%SZ")
-            df = pd.concat([result, data])
+            df = pd.concat([df, data])
 
         df["datetime"] = df["time"].map(lambda x: datetime.strptime(x, ISO_DATETIME_FORMAT).replace(tzinfo=timezone(timedelta())))
+        df = df[["datetime", "open", "high", "low", "close", "volume"]]
         df["datetime"] = df["datetime"].map(lambda x: datetime.fromtimestamp(x.timestamp()))
         df[['open','high','low','close','volume']] = df[['open','high','low','close','volume']].applymap(lambda x: float(x))
-        df = df[["datetime", "open", "high", "low", "close", "volume"]]
         df.sort_values(by=['datetime'], axis = 0, ascending =True, inplace = True)
         return df
 
@@ -299,9 +289,8 @@ class OkexGateway(VtGateway):
         order.exchange = 'OKEX'
         order.vtSymbol = VN_SEPARATOR.join([order.symbol, order.gatewayName])
 
-        if data['client_oid']:
-            order.orderID = data['client_oid']
-        else:
+        order.orderID = data.get("client_oid", None)
+        if not order.orderID:
             order.orderID = str(data['order_id'])
             self.writeLog(f"order by other source, symbol:{order.symbol}, exchange_id: {order.orderID}")
 
