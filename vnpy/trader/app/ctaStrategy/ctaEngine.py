@@ -16,8 +16,6 @@
    的定制化统结构（没错，得自己写）
 '''
 
-
-from __future__ import division
 import json
 import os
 import traceback
@@ -31,7 +29,7 @@ from vnpy.trader.vtConstant import *
 from vnpy.trader.vtObject import VtTickData, VtBarData
 from vnpy.trader.vtGateway import VtSubscribeReq, VtOrderReq, VtCancelOrderReq, VtLogData
 from vnpy.trader.vtFunction import todayDate, getJsonPath
-from vnpy.trader.utils.email import mail
+from vnpy.trader.email import mail
 from vnpy.trader.vtFunction import getTempPath
 from decimal import *
 
@@ -43,8 +41,6 @@ class CtaEngine(object):
     """CTA策略引擎"""
     settingFileName = 'CTA_setting.json'
     settingfilePath = getJsonPath(settingFileName, __file__)
-
-    STATUS_FINISHED = set([STATUS_REJECTED, STATUS_CANCELLED, STATUS_ALLTRADED])
 
     #----------------------------------------------------------------------
     def __init__(self, mainEngine, eventEngine):
@@ -231,36 +227,32 @@ class CtaEngine(object):
                 self.mainEngine.cancelOrder(req, order.gatewayName)
                 self.writeCtaLog('策略%s: 对本地订单%s，品种%s发送撤单委托'%(order.byStrategy, vtOrderID, order.vtSymbol))
 
-    def batchCancelOrder(self,vtOrderIDList):
+    def batchCancelOrder(self, vtOrderIDList):
         """批量撤单"""
         # 查询报单对象
-
-        reqList = []
+        reqLists = {}
         for vtOrderID in vtOrderIDList:
             order = self.mainEngine.getOrder(vtOrderID)
 
             # 如果查询成功
             if order:
                 # 检查是否报单还有效，只有有效时才发出撤单指令
-                orderFinished = (order.status==STATUS_ALLTRADED 
-                                or order.status==STATUS_CANCELLED 
+                orderFinished = (order.status == STATUS_ALLTRADED 
+                                or order.status == STATUS_CANCELLED 
                                 or order.status == STATUS_REJECTED
-                                or order.status == STATUS_CANCELLING
-                                or order.status == STATUS_CANCELINPROGRESS)
+                                or order.status == STATUS_CANCELLING)
                 
                 if not orderFinished:
-                    req = VtCancelOrderReq()
-                    req.vtSymbol = order.vtSymbol
-                    req.symbol = order.symbol
-                    req.exchange = order.exchange
-                    req.frontID = order.frontID
-                    req.sessionID = order.sessionID
-                    req.orderID = order.orderID
-            
-                    reqList.append(req)
+                    check = reqLists.get(order.vtSymbol, None)
+                    if check:
+                        reqLists[order.vtSymbol] += [order.orderID]
+                    else:
+                        reqLists.update({order.vtSymbol:[order.orderID]})
+                    strategy = order.byStrategy
 
-        self.mainEngine.batchCancelOrder(reqList, order.gatewayName)
-        self.writeCtaLog('策略%s: 对本地订单%s，发送批量撤单委托，实际发送单量%s'%(order.byStrategy, vtOrderIDList,len(reqList)))
+        for vtSymbol, ids in reqLists.items():
+            self.mainEngine.batchCancelOrder(vtSymbol, ids)
+            self.writeCtaLog('策略%s: 对品种%s发送批量撤单委托，ids:%s'%(strategy, vtSymbol, ids))
 
     #----------------------------------------------------------------------
     def sendStopOrder(self, vtSymbol, orderType, price, volume, priceType, strategy):
