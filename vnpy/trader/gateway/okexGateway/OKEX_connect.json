@@ -4,7 +4,7 @@
     "passphrase":"",
     "future_leverage": 10,
     "swap_leverage": 1,
-    "margin_token": 3,
+    "margin_token": 0,
     "sessionCount": 3,
     "trace": false,
     "symbols":["ETH-USDT","ETH-USD-SWAP","ETH-QUARTER"],

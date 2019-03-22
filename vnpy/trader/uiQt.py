@@ -4,13 +4,13 @@ import platform
 
 from qtpy import QtWidgets, QtGui, QtCore
 
-from vnpy.trader.vtGlobal import globalSetting
+from vnpy.trader.setting import SETTINGS
 from vnpy.trader.vtFunction import loadIconPath
 
 BASIC_FONT = None
 try:
-    family = globalSetting['fontFamily']
-    size = globalSetting['fontSize']
+    family = SETTINGS['font.family']
+    size = SETTINGS['font.size']
     BASIC_FONT = QtGui.QFont(family, size)
 except:
     BASIC_FONT = QtGui.QFont('微软雅黑', 10)
@@ -22,13 +22,12 @@ def createQApp():
     qApp = QtWidgets.QApplication([])
     
     # 设置Qt的皮肤
-    if globalSetting['darkStyle']:
-        try:
-            import qdarkstyle
-            qApp.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())    
+    try:
+        import qdarkstyle
+        qApp.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())    
 
-        except ImportError:
-            pass
+    except ImportError:
+        pass
         
     # 设置Windows底部任务栏图标
     if 'Windows' in platform.uname():

@@ -4,10 +4,10 @@
     "passphrase":"",
     "future_leverage": 10,
     "swap_leverage": 1,
-    "margin_token": 3,
+    "margin_token": 0,
     "sessionCount": 3,
     "trace": false,
-    "symbols":["EOS-USD-SWAP","BTC-USDT","ETH-QUARTER"],
+    "symbols":["ETH-USDT","ETH-USD-SWAP","ETH-QUARTER"],
     "setQryEnabled":false,
     "setQryFreq":60,
     "note":""
