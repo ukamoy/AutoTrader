@@ -11,11 +11,10 @@ from vnpy.trader.vtFunction import getJsonPath, getTempPath
 from .future import OkexfRestApi, OkexfWebsocketApi 
 from .swap import OkexSwapRestApi, OkexSwapWebsocketApi
 from .spot import OkexSpotRestApi, OkexSpotWebsocketApi
-from .okutil import granularityMap
+from .util import ISO_DATETIME_FORMAT, granularityMap
 
 REST_HOST = 'https://www.okex.com'
 WEBSOCKET_HOST = 'wss://real.okex.com:10442/ws/v3'
-
 ########################################################################
 class OkexGateway(VtGateway):
     """OKEX V3 接口"""
@@ -36,6 +35,7 @@ class OkexGateway(VtGateway):
 
         self.symbolTypeMap = {}
         self.gatewayMap = {}
+        self.stgMap = {}
 
         self.orderID = 10000
         self.tradeID = 0
@@ -82,7 +82,7 @@ class OkexGateway(VtGateway):
         # 创建行情和交易接口对象
         future_leverage = setting.get('future_leverage', 10)
         swap_leverage = setting.get('swap_leverage', 1)
-        margin_token = setting.get('margin_token', 3)
+        margin_token = setting.get('margin_token', 0) 
 
         # 实例化对应品种类别的API
         gateway_type = set(self.symbolTypeMap.values())
@@ -124,12 +124,22 @@ class OkexGateway(VtGateway):
     #----------------------------------------------------------------------
     def sendOrder(self, orderReq):
         """发单"""
+        strategy_name = self.stgMap.get(orderReq.byStrategy, None)
+        if not strategy_name:
+            # 规定策略名称长度和合法字符
+            alpha='abcdefghijklmnopqrstuvwxyz'
+            filter_text = "0123456789" + alpha + alpha.upper()
+            new_name = filter(lambda ch: ch in filter_text, orderReq.byStrategy)
+            name = ''.join(list(new_name))[:10]
+            self.stgMap.update({strategy_name:name})
+            strategy_name = name
+            
         symbolType = self.symbolTypeMap.get(orderReq.symbol, None)
         if not symbolType:
             self.writeLog(f"{self.gatewayName} does not have this symbol:{orderReq.symbol}")
         else:
             self.orderID += 1
-            order_id = symbolType + str(self.loginTime + self.orderID)
+            order_id = f"{strategy_name}{symbolType[:4]}{str(self.loginTime + self.orderID)}"
             return self.gatewayMap[symbolType]["REST"].sendOrder(orderReq, order_id)
 
     #----------------------------------------------------------------------
@@ -142,14 +152,23 @@ class OkexGateway(VtGateway):
             self.gatewayMap[symbolType]["REST"].cancelOrder(cancelOrderReq)
         
     # ----------------------------------------------------------------------
-    def batch_cancel_order(self, symbol=None, orderIDs=None):
-        """批量撤单"""
-        symbolType = self.symbolTypeMap.get(symbol, None)
-        self.gatewayMap[symbolType]["REST"].batch_cancel_order(symbol = symbol, orderIDs=orderIDs)
+    def cancelAll(self, symbols=None, orders=None):
+        """全撤"""
+        ids = []
+        if not symbols:
+            symbols = list(self.symbolTypeMap.keys())
+        for sym in symbols:
+            symbolType = self.symbolTypeMap.get(sym, None)
+            vtOrderIDs = self.gatewayMap[symbolType]["REST"].cancelAll(symbol = sym, orders=orders)
+            ids.extend(vtOrderIDs)
+            
+        print("全部撤单结果", ids)
+        return ids
 
     # ----------------------------------------------------------------------
     def closeAll(self, symbols, direction=None, standard_token = "USDT"):
-        """撤单"""
+        """全平"""
+        ids = []
         if not symbols:
             symbols = list(self.symbolTypeMap.keys())
         for sym in symbols:
@@ -158,6 +177,10 @@ class OkexGateway(VtGateway):
                 vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, standard_token = standard_token)
             else:
                 vtOrderIDs = self.gatewayMap[symbolType]["REST"].closeAll(symbol = sym, direction = direction)
+            ids.extend(vtOrderIDs)
+
+        print("全部平仓结果", ids)
+        return ids
 
     #----------------------------------------------------------------------
     def close(self):
@@ -210,23 +233,23 @@ class OkexGateway(VtGateway):
     def queryInfo(self):
         """"""
         for subGateway in self.gatewayMap.values():
-            subGateway["REST"].queryAccount()
-            subGateway["REST"].queryPosition()
+            subGateway["REST"].queryMonoAccount(subGateway['symbols'])
+            subGateway["REST"].queryMonoPosition(subGateway['symbols'])
             subGateway["REST"].queryOrder()
 
-    def initPosition(self,vtSymbol):
+    def initPosition(self, vtSymbol):
         symbol = vtSymbol.split(VN_SEPARATOR)[0]
         symbolType = self.symbolTypeMap.get(symbol, None)
         if not symbolType:
             self.writeLog(f"{self.gatewayName} does not have this symbol:{symbol}")
         else:
-            self.gatewayMap[symbolType]["REST"].queryMonoPosition(symbol)
-            self.gatewayMap[symbolType]["REST"].queryMonoAccount(symbol)
+            self.gatewayMap[symbolType]["REST"].queryMonoPosition([symbol])
+            self.gatewayMap[symbolType]["REST"].queryMonoAccount([symbol])
 
     def qryAllOrders(self, vtSymbol, order_id, status=None):
         pass
 
-    def loadHistoryBar(self, vtSymbol, type_, size=None, since=None, end=None):
+    def loadHistoryBar(self, vtSymbol, type_, size = None, since = None, end = None):
         import pandas as pd
         symbol = vtSymbol.split(VN_SEPARATOR)[0]
         symbolType = self.symbolTypeMap.get(symbol, None)
@@ -241,10 +264,10 @@ class OkexGateway(VtGateway):
         if end:
             end = datetime.utcfromtimestamp(datetime.timestamp(datetime.strptime(end,'%Y%m%d')))
         else:
-            end = datetime.utcnow()
+            end = datetime.utcfromtimestamp(datetime.timestamp(datetime.now()))
 
         if since:
-            start = datetime.timestamp(datetime.strptime(since,'%Y%m%d'))
+            start = datetime.utcfromtimestamp(datetime.timestamp(datetime.strptime(since,'%Y%m%d')))
             bar_count = (end -start).total_seconds()/ granularity
 
         if size:
@@ -295,10 +318,6 @@ class OkexGateway(VtGateway):
             self.writeLog(f"order by other source, symbol:{order.symbol}, exchange_id: {order.orderID}")
 
         order.vtOrderID = VN_SEPARATOR.join([self.gatewayName, order.orderID])
-        order.price = data['price']
-        order.tradedVolume = 0
-        order.orderDatetime = datetime.strptime(data['timestamp'], ISO_DATETIME_FORMAT)
-        order.orderTime = order.orderDatetime.strftime('%Y%m%d %H:%M:%S')
         return order
 
     def newTradeObject(self, order):

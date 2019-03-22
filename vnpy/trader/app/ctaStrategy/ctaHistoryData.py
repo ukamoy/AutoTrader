@@ -14,12 +14,11 @@ from time import time
 
 import pymongo
 
-from vnpy.trader.vtGlobal import globalSetting
 from vnpy.trader.vtConstant import *
 from vnpy.trader.vtObject import VtBarData
 from .ctaBase import SETTING_DB_NAME, TICK_DB_NAME, MINUTE_DB_NAME, DAILY_DB_NAME
 
-
+mongoURI = "mongodb://localhost:27017"
 #----------------------------------------------------------------------
 def downloadEquityDailyBarts(self, symbol):
     """
@@ -79,7 +78,7 @@ def loadMcCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' % (fileName, dbName, symbol))
     
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort']) 
+    client = pymongo.MongoClient(mongoURI) 
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)   
     
@@ -113,7 +112,7 @@ def loadTbCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
     
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)   
     
@@ -148,7 +147,7 @@ def loadTbPlusCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
 
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)      
 
@@ -196,7 +195,7 @@ def loadTdxCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
     
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)   
     
@@ -243,7 +242,7 @@ def loadTdxLc1(fileName, dbName, symbol):
     print('开始读取通达信Lc1文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
     
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)  
 
@@ -285,7 +284,7 @@ def loadOKEXCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
 
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)
 
@@ -324,7 +323,7 @@ def loadOKCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
 
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)
 
@@ -367,7 +366,7 @@ def loadJaqsCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' % (fileName, dbName, symbol))
 
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)
 
@@ -404,7 +403,7 @@ def loadCoinCsv(fileName, dbName, symbol):
     print('开始读取CSV文件%s中的数据插入到%s的%s中' %(fileName, dbName, symbol))
 
     # 锁定集合，并创建索引
-    client = pymongo.MongoClient(globalSetting['mongoHost'], globalSetting['mongoPort'])
+    client = pymongo.MongoClient(mongoURI)
     collection = client[dbName][symbol]
     collection.ensure_index([('datetime', pymongo.ASCENDING)], unique=True)
 

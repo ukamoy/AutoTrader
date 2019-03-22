@@ -9,7 +9,7 @@ from datetime import datetime
 from copy import copy
 
 from vnpy.event import Event
-from vnpy.trader.vtGlobal import globalSetting
+from vnpy.trader.setting import SETTINGS
 from vnpy.trader.vtEvent import *
 from vnpy.trader.vtGateway import *
 from vnpy.trader.language import text
@@ -80,24 +80,27 @@ class MainEngine(object):
             gatewayName, base_string = gateway['gatewayName'].split('_connect.json')
             gatewayTypeMap[gatewayName] = gateway['gatewayType']
             
-        path = os.getcwd()
+        
+
         # 遍历当前目录下的所有文件
-        for root, subdirs, files in os.walk(path):
-            for name in files:
+        files=os.listdir(".")
+        for file_ in files:
+            if file_.find("_connect.json")>=0:
                 # 只有文件名中包含_connect.json的文件，才是密钥配置文件
-                if '_connect.json' in name:
-                    gw = name.replace('_connect.json', '')                    
-                    if not gw in gatewayTypeMap.keys():
-                        for existnames in list(gatewayTypeMap.keys()):
-                            if existnames in gw and existnames!=gw:
-                                d= {
-                                    'gatewayName' : gw,
-                                    'gatewayDisplayName' :  gw,
-                                    'gatewayType': gatewayTypeMap[existnames]
-                                }
-                                self.gatewayDetailList.append(d)
-                                self.gatewayDict[gw] = gatewayModule.gatewayClass(self.eventEngine, 
-                                                                    gw)
+                gateway_name = file_.replace("_connect.json", "")
+
+                find_gateway = gatewayTypeMap.get(gateway_name, None)
+                if not find_gateway:
+                    for existnames in list(gatewayTypeMap.keys()):
+                        if existnames in gateway_name and existnames!=gateway_name:
+                            d= {
+                                'gatewayName' : gateway_name,
+                                'gatewayDisplayName' :  gateway_name,
+                                'gatewayType': gatewayTypeMap[existnames]
+                            }
+                            self.gatewayDetailList.append(d)
+                            self.gatewayDict[gateway_name] = gatewayModule.gatewayClass(self.eventEngine, 
+                                                                gateway_name)
 
                     
     #----------------------------------------------------------------------
@@ -173,6 +176,7 @@ class MainEngine(object):
             gateway.cancelOrder(cancelOrderReq)   
 
     def batchCancelOrder(self, vtSymbol, ids):
+        """批量撤单"""
         contract = self.getContract(vtSymbol)
         if contract:
             gateway = self.getGateway(contract.gatewayName)
@@ -306,7 +310,7 @@ class MainEngine(object):
     #----------------------------------------------------------------------
     def initLogEngine(self):
         """初始化日志引擎"""
-        if not globalSetting["logActive"]:
+        if not SETTINGS["log.active"]:
             return
         
         # 创建引擎
@@ -320,14 +324,14 @@ class MainEngine(object):
             "error": LogEngine.LEVEL_ERROR,
             "critical": LogEngine.LEVEL_CRITICAL,
         }
-        level = levelDict.get(globalSetting["logLevel"], LogEngine.LEVEL_CRITICAL)
+        level = levelDict.get(SETTINGS["log.level"], LogEngine.LEVEL_CRITICAL)
         self.logEngine.setLogLevel(level)
         
         # 设置输出
-        if globalSetting['logConsole']:
+        if SETTINGS['log.console']:
             self.logEngine.addConsoleHandler()
             
-        if globalSetting['logFile']:
+        if SETTINGS['log.file']:
             self.logEngine.addFileHandler()
             
         # 注册事件监听
@@ -382,7 +386,7 @@ class DataEngine(object):
         
         # 持仓细节相关
         # self.detailDict = {}                                # vtSymbol:PositionDetail
-        self.tdPenaltyList = globalSetting['tdPenalty']     # 平今手续费惩罚的产品代码列表
+        # self.tdPenaltyList = globalSetting['tdPenalty']     # 平今手续费惩罚的产品代码列表
         
         # 读取保存在硬盘的合约数据
         self.loadContracts()

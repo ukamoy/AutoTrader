@@ -1,6 +1,7 @@
 import hmac
 import base64
 
+ISO_DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 #----------------------------------------------------------------------
 def generateSignature(msg, apiSecret):
     """签名V3"""

@@ -14,11 +14,9 @@ from vnpy.trader.app.ctaStrategy.ctaBase import EVENT_CTA_LOG
 
 def findConnectKey():
     files=os.listdir(".")
-    for file in files:
-        if file.find("_connect.json")>=0:
-            end = file.find("_connect.json")
-            ConnectKey = file[:end]
-            return ConnectKey
+    for _file in files:
+        if _file.find("_connect.json")>=0:
+            return _file.replace("_connect.json","")
 
 #----------------------------------------------------------------------
 def processErrorEvent(event):
