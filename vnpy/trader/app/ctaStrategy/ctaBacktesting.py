@@ -5,7 +5,6 @@
 from datetime import datetime, timedelta
 from collections import OrderedDict,defaultdict
 from itertools import product
-import multiprocessing
 import copy
 import sys
 import os
@@ -50,10 +49,6 @@ class BacktestingEngine(object):
 
         self.capital = 1000000      # 回测时的起始本金（默认100万）
         self.balance = 0            # 回测判断是否可以下单的资金变量
-        self.slippage = 0           # 回测时假设的滑点
-        self.rate = 0               # 回测时假设的佣金比例（适用于百分比佣金）
-        self.size = 1               # 合约大小，默认为1    
-        self.priceTick = 0          # 价格最小变动 
         
         self.dbClient = None  # 数据库客户端
         self.dbURI = ''       # 回测数据库地址
@@ -61,8 +56,8 @@ class BacktestingEngine(object):
         self.dbCursor = None  # 数据库指针
         
         self.initData = []          # 初始化用的数据
-        self.symbol = ''            # 回测集合名
         self.backtestData = []      # 回测用历史数据
+        self.contractInfo = {}      # 回测标的信息字典
 
         self.cachePath = os.path.join(os.path.expanduser("~"), "vnpy_data")       # 本地数据缓存地址
         self.logActive = False      # 回测日志开关
@@ -97,12 +92,13 @@ class BacktestingEngine(object):
     #------------------------------------------------    
     
     #----------------------------------------------------------------------
-    def roundToPriceTick(self, price):
+    def roundToPriceTick(self, vtSymbol, price):
         """取整价格到合约最小价格变动"""
-        if not self.priceTick:
+        priceTick = self.contractInfo[vtSymbol].get("priceTick", 0)
+        if not priceTick:
             return price
         
-        newPrice = round(price/self.priceTick, 0) * self.priceTick
+        newPrice = round(price/priceTick, 0) * priceTick
         return newPrice
 
     #----------------------------------------------------------------------
@@ -148,6 +144,7 @@ class BacktestingEngine(object):
     def setDB_URI(self, dbURI):
         """设置历史数据所用的数据库"""
         self.dbURI = dbURI
+
     #----------------------------------------------------------------------
     def setDatabase(self,dbName):
         """设置数据库名称"""
@@ -158,34 +155,23 @@ class BacktestingEngine(object):
         """设置资本金"""
         self.capital = capital
     
-    #----------------------------------------------------------------------
-    def setSlippage(self, slippage):
-        """设置滑点点数"""
-        self.slippage = slippage
-        
-    #----------------------------------------------------------------------
-    def setSize(self, size):
-        """设置合约大小"""
-        self.size = size
-        
-    #----------------------------------------------------------------------
-    def setRate(self, rate):
-        """设置佣金比例"""
-        self.rate = rate
-        
-    #----------------------------------------------------------------------
-    def setPriceTick(self, priceTick):
-        """设置价格最小变动"""
-        self.priceTick = priceTick
+    def setContracts(self, contractInfo = {}):
+        self.contractInfo = contractInfo
+    
     #----------------------------------------------------------------------
     def setLog(self, active = False, path = None):
         """设置是否出交割单和日志"""
-        self.logPath = path
+        if path:
+            self.logPath = path
         self.logActive = active
+        if self.logActive:
+            if not os.path.isdir(self.logPath):
+                os.makedirs(self.logPath)
 
     #----------------------------------------------------------------------
     def setCachePath(self, path):
         self.cachePath = path
+
     #------------------------------------------------
     # 数据回放相关
     #------------------------------------------------
@@ -232,7 +218,7 @@ class BacktestingEngine(object):
         # 优先从本地文件缓存读取数据
         symbols_no_data = dict()  # 本地缓存没有的数据
         
-        for symbol in symbolList:
+        for symbol in self.strategy.symbolList:
             # 如果存在缓存文件，则读取日期列表和bar数据，否则初始化df_cached和dates_cached
             save_path = os.path.join(self.cachePath, self.mode, symbol.replace(":", "_"))
             symbols_no_data[symbol] = datetime_list
@@ -287,17 +273,17 @@ class BacktestingEngine(object):
                         else:
                             self.output(f"{symbol}： 数据库也没能补到缺失的数据")
                     else:
-                        self.output("数据库没有 %s 这个品种" % symbol)
-                        self.output("这些品种在我们的数据库里: %s" % self.dbClient.collection_names())
+                        self.output(f"数据库没有 {symbol} 这个品种")
+                        self.output(f"这些品种在我们的数据库里: {self.dbClient.collection_names()}")
         else:
             self.output('没有设置回测数据库URI, 无法回补缓存数据。请在回测设置 engine.setDB_URI("mongodb://localhost:27017")')
 
         if len(dataList) > 0:
             dataList.sort(key=lambda x: x.datetime)
-            self.output(u'载入完成, 数据量:%s' % (len(dataList)))
+            self.output(f"载入完成, 数据量:{len(dataList)}")
             return dataList
         else:
-            self.output(u'WARNING: 该时间段:[%s,%s) 数据量为0!' % (start, end))
+            self.output(f'WARNING: 该时间段:[%s,%s) 数据量为0!' % (start, end))
             return []
         
     #----------------------------------------------------------------------
@@ -324,7 +310,7 @@ class BacktestingEngine(object):
         if self.strategyStartDate == self.dataStartDate:
             self.output(u'策略无请求历史数据初始化')
         else:
-            self.initData = self.loadHistoryData(self.strategy.symbolList,self.strategyStartDate,self.dataStartDate)
+            self.initData = self.loadHistoryData(self.strategyStartDate, self.dataStartDate)
         self.strategy.inited = True
         self.strategy.onInit()
         self.output(u'策略初始化完成')
@@ -336,19 +322,19 @@ class BacktestingEngine(object):
         # 分批加载回测数据.数据范围:[self.dataStartDate,self.dataEndDate+1)
         begin = start = self.dataStartDate
         stop = self.dataEndDate + timedelta(munutes = 1)
-        self.output(u'开始回放回测数据,回测范围:[%s,%s)'%(begin.strftime(constant.DATETIME),stop.strftime(constant.DATETIME)))
+        self.output(f'开始回放回测数据,回测范围:[{start.strftime(constant.DATETIME)},{end.strftime(constant.DATETIME)})')
         while start<stop:
             end = min(start + timedelta(dataDays), stop)
-            self.backtestData = self.loadHistoryData(self.strategy.symbolList,start,end)
+            self.backtestData = self.loadHistoryData(start, end)
             if len(self.backtestData)==0:
                 break
             else:
-                self.output(u'当前回放数据:[%s,%s)'%(start.strftime(constant.DATETIME),end.strftime(constant.DATETIME)))
-                oneP = int(len(self.backtestData) / 100)
-
+                self.output(f'当前回放数据:[{start.strftime(constant.DATETIME)},{end.strftime(constant.DATETIME)})')
+                oneP = len(self.backtestData)
                 for idx, data in enumerate(self.backtestData):
-                    if idx % oneP == 0:
-                        self.output('Progress: %s%%' % str(int(idx / oneP)), True)
+                    pct = int((idx+1)*100 / oneP)
+                    if pct%1 == 0:
+                        self.output(f'Progress: {str(pct)}%', True)
                     func(data)
                 start = end
 
@@ -357,8 +343,6 @@ class BacktestingEngine(object):
         # 日志输出模块
         if self.logActive:
             dataframe = pd.DataFrame(self.logList)
-            if not os.path.isdir(self.logPath):
-                os.makedirs(self.logPath)
             filename = os.path.join(self.logPath, u"日志.csv")
             dataframe.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
             self.output(u'策略日志已生成')
@@ -394,7 +378,8 @@ class BacktestingEngine(object):
         """
         self.strategy = strategyClass(self, setting)
         self.strategy.name = self.strategy.className
-        self.strategy.symbolList = setting['symbolList']
+        self.strategy.symbolList = list(self.contractInfo.keys())
+        # self.strategy.symbolList = setting['symbolList']
         self.initPosition(self.strategy)
 
     #----------------------------------------------------------------------
@@ -430,7 +415,7 @@ class BacktestingEngine(object):
                 
                 sellCross = (order.direction==constant.DIRECTION_SHORT and 
                             order.price<=sellCrossPrice and
-                            sellCrossPrice > 0)    # 国内的tick行情在跌停时bidPrice1为0，此时卖无法成交
+                            sellCrossPrice > 0)     # 国内的tick行情在跌停时bidPrice1为0，此时卖无法成交
                 
                 # 如果发生了成交
                 if buyCross or sellCross:
@@ -615,7 +600,8 @@ class BacktestingEngine(object):
             order.offset = constant.OFFSET_CLOSE
             closable = self.strategy.eveningDict[order.vtSymbol + '_LONG']
             if order.totalVolume > closable:
-                self.output(f"当前order：{order.orderTime}, 卖平{order.totalVolume}, 可平{closable}, 实盘下可能拒单, 请小心处理")                
+                self.output(f"当前order：{order.orderTime}, {order.vtSymbol}, 卖平{order.totalVolume}, 可平{closable}")
+                self.output("实盘下可能拒单, 请小心处理")              
             closable -= order.totalVolume
             self.strategy.eveningDict[order.vtSymbol + '_LONG'] = round(closable, 4)
         elif orderType == CTAORDER_SHORT:
@@ -626,17 +612,18 @@ class BacktestingEngine(object):
             order.offset = constant.OFFSET_CLOSE
             closable = self.strategy.eveningDict[order.vtSymbol + '_SHORT']
             if order.totalVolume > closable:
-                self.output(f"当前order：{order.orderTime}, 买平{order.totalVolume}, 可平{closable}, 实盘下可能拒单, 请小心处理")
+                self.output(f"当前order：{order.orderTime}, {order.vtSymbol}, 买平{order.totalVolume}, 可平{closable}")
+                self.output("实盘下可能拒单, 请小心处理")  
             closable -= order.totalVolume
             self.strategy.eveningDict[order.vtSymbol + '_SHORT'] = round(closable, 4)
 
         if priceType == constant.PRICETYPE_LIMITPRICE:
-            order.price = self.roundToPriceTick(price)
+            order.price = self.roundToPriceTick(vtSymbol, price)
         elif priceType == constant.PRICETYPE_MARKETPRICE:
             if order.direction == constant.DIRECTION_LONG:
-                order.price = self.roundToPriceTick(price) * 1000
+                order.price = self.roundToPriceTick(vtSymbol, price) * 1000
             elif order.direction == constant.DIRECTION_SHORT:
-                order.price = self.roundToPriceTick(price) / 1000
+                order.price = self.roundToPriceTick(vtSymbol, price) / 1000
 
         # if leverage:
         #     if order.offset == constant.OFFSET_OPEN and (self.balance < (self.size /leverage * order.totalVolume)):
@@ -667,7 +654,7 @@ class BacktestingEngine(object):
         so = StopOrder()
         so.vtSymbol = vtSymbol
         so.priceType = priceType
-        so.price = self.roundToPriceTick(price)
+        so.price = self.roundToPriceTick(vtSymbol, price)
         so.volume = volume
         so.strategy = strategy
         so.status = STOPORDER_WAITING
@@ -778,7 +765,7 @@ class BacktestingEngine(object):
     #----------------------------------------------------------------------
     def getPriceTick(self, strategy):
         """获取最小价格变动"""
-        return self.priceTick
+        return 0
     
     #-------------------------------------------
     def initPosition(self, strategy):
@@ -835,7 +822,7 @@ class BacktestingEngine(object):
                         closedVolume = min(exitTrade.volume, entryTrade.volume)
                         result = TradingResult(entryTrade.price, entryTrade.tradeDatetime, entryTrade.orderID,
                                                exitTrade.price, exitTrade.tradeDatetime,exitTrade.orderID,
-                                               -closedVolume, self.rate, self.slippage, self.size)
+                                               -closedVolume, self.contractInfo[trade.vtSymbol])
                         resultList.append(result)
                         r = result.__dict__
                         r.update({"symbol":trade.vtSymbol})
@@ -883,7 +870,7 @@ class BacktestingEngine(object):
                         closedVolume = min(exitTrade.volume, entryTrade.volume)
                         result = TradingResult(entryTrade.price, entryTrade.tradeDatetime, entryTrade.orderID,
                                                exitTrade.price, exitTrade.tradeDatetime, exitTrade.orderID,
-                                               closedVolume, self.rate, self.slippage, self.size)
+                                               closedVolume, self.contractInfo[trade.vtSymbol])
                         resultList.append(result)
                         r = result.__dict__
                         r.update({"symbol":trade.vtSymbol})
@@ -926,8 +913,9 @@ class BacktestingEngine(object):
                 endPrice = self.tickDict[symbol].lastPrice
 
             for trade in tradeList:
-                result = TradingResult(trade.price, trade.tradeDatetime, trade.orderID, endPrice, self.dt, "LastDay",
-                                       trade.volume, self.rate, self.slippage, self.size)
+                result = TradingResult(trade.price, trade.tradeDatetime, trade.orderID,
+                                       endPrice, self.dt, "LastDay",
+                                       trade.volume, self.contractInfo[symbol])
 
                 resultList.append(result)
                 r = result.__dict__
@@ -942,8 +930,9 @@ class BacktestingEngine(object):
                 endPrice = self.tickDict[symbol].lastPrice
 
             for trade in tradeList:
-                result = TradingResult(trade.price, trade.tradeDatetime, trade.orderID, endPrice, self.dt, "LastDay",
-                                       -trade.volume, self.rate, self.slippage, self.size)
+                result = TradingResult(trade.price, trade.tradeDatetime, trade.orderID,
+                                       endPrice, self.dt, "LastDay",
+                                       -trade.volume, self.contractInfo[symbol])
                 resultList.append(result)
                 r = result.__dict__
                 r.update({"symbol":symbol})
@@ -957,13 +946,11 @@ class BacktestingEngine(object):
         # 交割单输出模块
         if self.logActive:
             resultDF = pd.DataFrame(deliverSheet)
-            if not os.path.isdir(self.logPath):
-                os.makedirs(self.logPath)
             filename = os.path.join(self.logPath, u"交割单.csv")
             resultDF.to_csv(filename, index=False, sep=',')
             self.output(u'交割单已生成')
 
-        # 然后基于每笔交易的结果，我们可以计算具体的盈亏曲线和最大回撤等        
+        # 然后基于每笔交易的结果，我们可以计算具体的盈亏曲线和最大回撤等
         capital = 0             # 资金
         maxCapital = 0          # 资金最高净值
         drawdown = 0            # 回撤
@@ -1083,8 +1070,6 @@ class BacktestingEngine(object):
 
         # 输出回测统计图
         if self.logActive:
-            if not os.path.isdir(self.logPath):
-                os.makedirs(self.logPath)
             filename = os.path.join(self.logPath, u"回测统计图.png")
             plt.savefig(filename)
             self.output(u'策略回测统计图已保存')
@@ -1156,6 +1141,8 @@ class BacktestingEngine(object):
     #----------------------------------------------------------------------
     def runParallelOptimization(self, strategyClass, optimizationSetting):
         """并行优化参数"""
+        import multiprocessing
+
         # 获取优化设置        
         settingList = optimizationSetting.generateSetting()
         targetName = optimizationSetting.optimizeTarget
@@ -1173,8 +1160,7 @@ class BacktestingEngine(object):
             l.append(pool.apply_async(optimize, (self.__class__, strategyClass, setting,
                                                  targetName, self.mode,
                                                  self.startDate, self.initHours, self.endDate,
-                                                 self.slippage, self.rate, self.size, self.priceTick,
-                                                 self.dbURI, self.dbName, self.symbol)))
+                                                 self.dbURI, self.dbName, self.contractInfo)))
         pool.close()
         pool.join()
         
@@ -1227,7 +1213,7 @@ class BacktestingEngine(object):
                 dailyResult.previousClose = previousClose
                 previousClose = dailyResult.closePrice
 
-                dailyResult.calculatePnl(openPosition, self.size, self.rate, self.slippage)
+                dailyResult.calculatePnl(openPosition, self.contractInfo[symbol])
                 openPosition = dailyResult.closePosition
 
             # 生成DataFrame
@@ -1388,14 +1374,11 @@ class BacktestingEngine(object):
         
         # 输出回测绩效图
         if self.logActive:
-            if not os.path.isdir(self.logPath):
-                os.makedirs(self.logPath)
             filename = os.path.join(self.logPath, u"回测绩效图.png")
             plt.savefig(filename)
             self.output(u'策略回测绩效图已保存')
 
         plt.show()
-       
         
 ########################################################################
 class TradingResult(object):
@@ -1403,10 +1386,10 @@ class TradingResult(object):
 
     #----------------------------------------------------------------------
     def __init__(self, entryPrice, entryDt, entryID, exitPrice, 
-                 exitDt, exitID, volume, rate, slippage, size):
+                 exitDt, exitID, volume, contractInfo):
         """Constructor"""
         self.entryPrice = entryPrice    # 开仓价格
-        self.entryDt = entryDt          # 开仓时间datetime    
+        self.entryDt = entryDt          # 开仓时间datetime
         self.entryID = entryID
 
         self.exitPrice = exitPrice      # 平仓价格
@@ -1414,6 +1397,10 @@ class TradingResult(object):
         self.exitID = exitID
 
         self.volume = volume            # 交易数量（+/-代表方向）
+
+        size = contractInfo.get("size", 1)
+        rate = contractInfo.get("rate", 0)
+        slippage = contractInfo.get("slippage", 0)
 
         self.turnover = (self.entryPrice + self.exitPrice) * size * abs(volume)   # 成交金额
 
@@ -1457,13 +1444,17 @@ class DailyResult(object):
         self.tradeList.append(trade)
 
     #----------------------------------------------------------------------
-    def calculatePnl(self, openPosition=0, size=1, rate=0, slippage=0):
+    def calculatePnl(self, openPosition=0, contractInfo = {}):
         """
         计算盈亏
         size: 合约乘数
         rate：手续费率
         slippage：滑点点数
         """
+        size = contractInfo.get("size", 1)
+        rate = contractInfo.get("rate", 0)
+        slippage = contractInfo.get("slippage", 0)
+
         # 持仓部分
         self.openPosition = openPosition
         self.positionPnl = self.openPosition * (self.closePrice - self.previousClose) * size
@@ -1564,18 +1555,14 @@ def formatNumber(n):
 #----------------------------------------------------------------------
 def optimize(backtestEngineClass, strategyClass, setting, targetName,
              mode, startDate, initHours, endDate,
-             slippage, rate, size, priceTick,
-             db_URI, dbName, symbol):
+             dbURI, dbName, contractInfo):
     """多进程优化时跑在每个进程中运行的函数"""
     engine = backtestEngineClass()
     engine.setBacktestingMode(mode)
     engine.setStartDate(startDate, initHours)
     engine.setEndDate(endDate)
-    engine.setSlippage(slippage)
-    engine.setRate(rate)
-    engine.setSize(size)
-    engine.setPriceTick(priceTick)
-    engine.setDatabase(dbURI)
+    engine.setContracts(contractInfo)
+    engine.setDB_URI(dbURI)
     engine.setDatabase(dbName)
     
     engine.initStrategy(strategyClass, setting)
@@ -1603,7 +1590,7 @@ def get_date_list(start=None, end=None):
     :return:
     """
     if start is None:
-        start = datetime.strptime("2000-01-01 01:00:00", constant.DATETIME_FORMAT)
+        start = datetime.strptime("2000-01-01 01:00:00", constant.DATETIME)
     if end is None:
         end = datetime.now()
     data = []
@@ -1624,7 +1611,7 @@ def get_minutes_list(start=None, end=None):
     :return:
     """
     if start is None:
-        start = datetime.strptime("2019-01-01 01:00:00", constant.DATETIME_FORMAT)
+        start = datetime.strptime("2019-01-01 01:00:00", constant.DATETIME)
     if end is None:
         end = datetime.now()
     data = []
