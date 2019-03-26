@@ -48,7 +48,6 @@ class BacktestingEngine(object):
         self.endDate = ''
 
         self.capital = 1000000      # 回测时的起始本金（默认100万）
-        self.balance = 0            # 回测判断是否可以下单的资金变量
         
         self.dbClient = None  # 数据库客户端
         self.dbURI = ''       # 回测数据库地址
@@ -441,6 +440,7 @@ class BacktestingEngine(object):
                         self.strategy.eveningDict[symbol + "_LONG"] += order.totalVolume
                         self.strategy.posDict[symbol + "_LONG"] = round(self.strategy.posDict[symbol + "_LONG"], 4)
                         self.strategy.eveningDict[symbol + "_LONG"] = round(self.strategy.eveningDict[symbol + "_LONG"], 4)
+                        self.strategy.accountDict["balance"] += ((order.price-trade.price) * order.volume)
                     elif buyCross and trade.offset == constant.OFFSET_CLOSE:
                         trade.price = min(order.price, buyBestCrossPrice)
                         self.strategy.posDict[symbol + "_SHORT"] -= order.totalVolume
@@ -451,6 +451,7 @@ class BacktestingEngine(object):
                         self.strategy.eveningDict[symbol + "_SHORT"] += order.totalVolume
                         self.strategy.posDict[symbol + "_SHORT"] = round(self.strategy.posDict[symbol + "_SHORT"], 4)
                         self.strategy.eveningDict[symbol + "_SHORT"] = round(self.strategy.eveningDict[symbol + "_SHORT"], 4)
+                        self.strategy.accountDict["balance"] -= ((trade.price-order.price) * order.volume)
                     elif sellCross and trade.offset == constant.OFFSET_CLOSE:
                         trade.price = max(order.price, sellBestCrossPrice)
                         self.strategy.posDict[symbol + "_LONG"] -= order.totalVolume
@@ -461,10 +462,12 @@ class BacktestingEngine(object):
                         trade.price = min(order.price, buyBestCrossPrice)
                         self.strategy.posDict[symbol + "_LONG"] += order.totalVolume
                         self.strategy.posDict[symbol + "_LONG"] = round(self.strategy.posDict[symbol + "_LONG"], 4)
+                        self.strategy.accountDict["balance"] += ((order.price-trade.price) * order.volume)
                     elif sellCross and trade.offset == constant.OFFSET_NONE:
                         trade.price = max(order.price, sellBestCrossPrice)
                         self.strategy.posDict[symbol + "_LONG"] -= order.totalVolume
                         self.strategy.posDict[symbol + "_LONG"] = round(self.strategy.posDict[symbol + "_LONG"], 4)
+                        self.strategy.accountDict["balance"] += (trade.price * order.volume)
 
                     trade.volume = order.totalVolume
                     trade.tradeTime = self.dt.strftime(constant.DATETIME)
@@ -625,19 +628,12 @@ class BacktestingEngine(object):
             elif order.direction == constant.DIRECTION_SHORT:
                 order.price = self.roundToPriceTick(vtSymbol, price) / 1000
 
-        # if leverage:
-        #     if order.offset == constant.OFFSET_OPEN and (self.balance < (self.size /leverage * order.totalVolume)):
-        #         order.status = constant.STATUS_REJECTED
-        #         order.rejectedInfo = "INSUFFICIENT FUND"
-        #     elif order.offset == constant.OFFSET_OPEN and (self.balance > (self.size /leverage * order.totalVolume)):
-        #         self.balance -= self.size /leverage * order.totalVolume
-        
-        #     if order.offset == constant.OFFSET_CLOSE and order.direction == constant.DIRECTION_SHORT and strategy.eveningDict[vtSymbol+"_LONG"]<order.totalVolume:
-        #         order.status = constant.STATUS_REJECTED
-        #         order.rejectedInfo = "INSUFFICIENT EVENING POSITION"
-        #     elif order.offset == constant.OFFSET_CLOSE and order.direction == constant.DIRECTION_LONG and strategy.eveningDict[vtSymbol+"_SHORT"]<order.totalVolume:
-        #         order.status = constant.STATUS_REJECTED
-        #         order.rejectedInfo = "INSUFFICIENT EVENING POSITION"
+        balance = strategy.accountDict["balance"]
+        if not order.offset == constant.OFFSET_CLOSE:
+            if balance < (price * order.totalVolume):
+                self.output("INSUFFICIENT FUND")
+            else:
+                strategy.accountDict["balance"] -= price * order.totalVolume
 
         # 保存到限价单字典中
         self.workingLimitOrderDict[orderID] = order
@@ -699,6 +695,8 @@ class BacktestingEngine(object):
                 elif order.direction == constant.DIRECTION_SHORT:
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] += order.totalVolume
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] = round(self.strategy.posDict[order.vtSymbol + '_LONG'], 4)
+            else:
+                self.strategy.accountDict["balance"] += order.price * order.volume
             
             self.strategy.onOrder(order)
 
@@ -774,6 +772,7 @@ class BacktestingEngine(object):
             strategy.posDict[symbol+"_SHORT"] = 0
             strategy.eveningDict[symbol+"_LONG"] = 0
             strategy.eveningDict[symbol+"_SHORT"] = 0
+            strategy.accountDict["balance"] = self.capital
             
         print(f"仓位字典构造完成\n初始仓位:{strategy.posDict}")
     
