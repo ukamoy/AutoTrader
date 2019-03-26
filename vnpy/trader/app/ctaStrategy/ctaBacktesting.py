@@ -494,12 +494,11 @@ class BacktestingEngine(object):
             buyCrossPrice = data.high    # 若买入方向停止单价格低于该价格，则会成交
             sellCrossPrice = data.low    # 若卖出方向限价单价格高于该价格，则会成交
             bestCrossPrice = data.open   # 最优成交价，买入停止单不能低于，卖出停止单不能高于
-            symbol = data.vtSymbol
         else:
             buyCrossPrice = data.lastPrice
             sellCrossPrice = data.lastPrice
             bestCrossPrice = data.lastPrice
-            symbol = data.vtSymbol
+        symbol = data.vtSymbol
 
         # 遍历停止单字典中的所有停止单
 
@@ -696,7 +695,8 @@ class BacktestingEngine(object):
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] += order.totalVolume
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] = round(self.strategy.posDict[order.vtSymbol + '_LONG'], 4)
             else:
-                self.strategy.accountDict["balance"] += order.price * order.volume
+                if not (order.direction == contant.DIRECTION_SHORT and order.offset == constant.OFFSET_NONE):
+                    self.strategy.accountDict["balance"] += order.price * order.volume
             
             self.strategy.onOrder(order)
 
