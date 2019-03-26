@@ -115,8 +115,8 @@ GATEWAYTYPE_BTC = 'btc'                         # 比特币
 GATEWAYTYPE_DATA = 'data'                       # 数据（非交易）
 
 VN_SEPARATOR = ':'
-ISO_DATETIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
-DATETIME_FORMAT = '%Y%m%d %H:%M:%S'
-STANDARD_DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S.%f'
-DATE_FORMAT = '%Y-%m-%d'
-TIME_FORMAT = '%H:%M:%S.%fZ'
+ISO_DATETIME = '%Y-%m-%dT%H:%M:%S.%fZ'
+DATETIME = '%Y%m%d %H:%M:%S'
+STANDARD_DATETIME = '%Y-%m-%d %H:%M:%S.%f'
+DATE = '%Y-%m-%d'
+TIME = '%H:%M:%S.%fZ'
