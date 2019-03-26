@@ -27,7 +27,7 @@ class BacktestingEngine(object):
     
     TICK_MODE = 'tick'
     BAR_MODE = 'bar'
-    END_OF_THE_WORLD = datetime.now().strftime(Format.DATETIME)
+    END_OF_THE_WORLD = datetime.now().strftime(constant.DATETIME)
 
     #----------------------------------------------------------------------
     def __init__(self):
@@ -205,13 +205,22 @@ class BacktestingEngine(object):
         if not endDate:
             endDate = datetime.strptime(self.END_OF_THE_WORLD, constant.DATETIME)
 
+        modeMap = {
+            self.BAR_MODE: "datetime", 
+            self.TICK_MODE: "date"
+            }
+
         # 根据回测模式，确认要使用的数据类
         if self.mode == self.BAR_MODE:
             dataClass = VtBarData
             datetime_list = get_minutes_list(start=startDate, end=endDate)
+            date_list = list(set([date.strftime(constant.DATE) for date in datetime_list]))
+            need_files = [f"{d}.hd5" for d in date_list]
         else:
             dataClass = VtTickData
-            datetime_list = get_date_list(start=startDate, end=endDate)
+            datetime_list = [date.strftime(constant.DATE) for date in get_date_list(start=startDate, end=endDate)]
+            need_files = [f"{d}.hd5" for d in datetime_list]
+        need_files = list(set(need_files))
 
         start = startDate.strftime(constant.DATETIME)
         end = endDate.strftime(constant.DATETIME)
@@ -222,32 +231,26 @@ class BacktestingEngine(object):
         df_cached = {}
         # 优先从本地文件缓存读取数据
         symbols_no_data = dict()  # 本地缓存没有的数据
-        save_path = os.path.join(self.cachePath, self.mode)
-        if not os.path.isdir(save_path):
-            os.makedirs(save_path)
+        
         for symbol in symbolList:
             # 如果存在缓存文件，则读取日期列表和bar数据，否则初始化df_cached和dates_cached
-            pkl_file_path = f'{save_path}/{symbol.replace(":", "_")}.pkl'
-            if os.path.isfile(pkl_file_path):
-                # 读取 pkl
-                pkl_file = open(pkl_file_path, 'rb')
-                df_cached[symbol] = pickle.load(pkl_file)
-                pkl_file.close()
-                df_acquired =  df_cached[symbol][
-                    (df_cached[symbol].datetime >= start) & (df_cached[symbol].datetime < end)
-                    ]
-                dataList += [self.parseData(dataClass, item) for item in df_acquired.to_dict("record")]
-                if self.mode == self.BAR_MODE:
-                    dt_list_acquired = set(df_acquired['datetime'])  # bar 回测按实际的datetime
-                else:
-                    dt_list_acquired = set(df_acquired['date'])  # tick 回测按日
+            save_path = os.path.join(self.cachePath, self.mode, symbol.replace(":", "_"))
+            symbols_no_data[symbol] = datetime_list
+            df_cached[symbol] = {}
+            dt_list_acquired = []
 
-                symbols_no_data[symbol] = list(dt_list_acquired ^ (set(datetime_list)))
-            else:
-                df_cached[symbol] = pd.DataFrame([])
-                dt_list_acquired = []
-                symbols_no_data[symbol] = datetime_list
+            for file_ in need_files:
+                hd5_file_path = f'{save_path}/{file_}'
+                if os.path.isfile(hd5_file_path):
+                    # 读取 hd5
+                    df_cached[symbol][file_] = pd.read_hdf(hd5_file_path)
+                    df_acquired = df_cached[symbol][file_][
+                        (df_cached[symbol][file_].datetime >= start) & (df_cached[symbol][file_].datetime < end)
+                        ]
+                    dataList += [self.parseData(dataClass, item) for item in df_acquired.to_dict("record")]
+                    dt_list_acquired += list(set(df_acquired[modeMap[self.mode]]))  # bar 回测按datetime, tick 回测按date
 
+            symbols_no_data[symbol] = list(set(dt_list_acquired) ^ (set(datetime_list)))
             acq, need = len(dt_list_acquired), len(datetime_list)
             self.output(f"{symbol}： 从本地缓存文件实取{acq}, 最大应取{need}, 还需从数据库取{need-acq}")
 
@@ -259,12 +262,7 @@ class BacktestingEngine(object):
                 if len(need_datetimes) > 0:  # 需要从数据库取数据
                     if symbol in self.dbClient.collection_names():
                         collection = self.dbClient[symbol]
-
-                        if self.mode == self.BAR_MODE:
-                            Cursor = collection.find({"datetime": {"$in": need_datetimes}})  # 按时间回测检索
-                        else:
-                            Cursor = collection.find({"date": {"$in": need_datetimes}})  # 按日回测检索
-                        
+                        Cursor = collection.find({modeMap[self.mode]: {"$in": need_datetimes}})  # 按时间回测检索
                         data_df = pd.DataFrame(list(Cursor))
                         if data_df.size > 0:
                             del data_df["_id"]
@@ -273,13 +271,18 @@ class BacktestingEngine(object):
                                             data_df[(data_df.datetime >= start) & (data_df.datetime < end)].to_dict(
                                                 "record")]
                             # 缓存到本地文件
-                            update_df = df_cached[symbol].append(data_df)
-                            output = open(f'{save_path}/{symbol.replace(":", "_")}.pkl', 'wb')
-                            update_df.sort_values(by='datetime', ascending=True, inplace=True)
-                            
-                            pickle.dump(update_df, output)
-                            output.close()
-                            acq, need = len(list(data_df['datetime'])), len(need_datetimes)
+                            if not os.path.isdir(save_path):
+                                os.makedirs(save_path)
+
+                            if self.mode == self.BAR_MODE:
+                                dates = [datetimes.strftime(constant.DATE) for datetimes in symbols_no_data[symbol]]
+                                symbols_no_data[symbol] = list(set(dates))
+                            for date in symbols_no_data[symbol]:
+                                update_df = data_df[data_df["date"] == date]
+                                if update_df.size > 0:
+                                    update_df.to_hdf(f"{save_path}/{date}.hd5", "/", append=True)
+
+                            acq, need = len(list(set(data_df[modeMap[self.mode]]))), len(need_datetimes)
                             self.output(f"{symbol}： 从数据库存取了{acq}, 应补{need}, 缺失了{need-acq}")
                         else:
                             self.output(f"{symbol}： 数据库也没能补到缺失的数据")
@@ -287,7 +290,7 @@ class BacktestingEngine(object):
                         self.output("数据库没有 %s 这个品种" % symbol)
                         self.output("这些品种在我们的数据库里: %s" % self.dbClient.collection_names())
         else:
-            self.output('没有设置数据库URI, 请在回测设置 engine.setDB_URI("mongodb://localhost:27017")')
+            self.output('没有设置回测数据库URI, 无法回补缓存数据。请在回测设置 engine.setDB_URI("mongodb://localhost:27017")')
 
         if len(dataList) > 0:
             dataList.sort(key=lambda x: x.datetime)
