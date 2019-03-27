@@ -161,7 +161,7 @@ class BacktestingEngine(object):
     def setLog(self, active = False, path = None):
         """设置是否出交割单和日志"""
         if path:
-            self.logPath = path
+            self.logPath = os.path.join(path, self.logFolderName)
         self.logActive = active
         if self.logActive:
             if not os.path.isdir(self.logPath):
@@ -286,7 +286,7 @@ class BacktestingEngine(object):
             return []
         
     #----------------------------------------------------------------------
-    def runBacktesting(self):
+    def runBacktesting(self, prepared_data= []):
         """运行回测"""
 
         dataLimit = 1000000
@@ -309,7 +309,11 @@ class BacktestingEngine(object):
         if self.strategyStartDate == self.dataStartDate:
             self.output(u'策略无请求历史数据初始化')
         else:
-            self.initData = self.loadHistoryData(self.strategyStartDate, self.dataStartDate)
+            if not prepared_data:
+                self.initData = self.loadHistoryData(self.strategyStartDate, self.dataStartDate)
+            else:
+                self.initData = prepared_data[0]
+            self.output(u'初始化预加载数据成功, 数据长度:%s' % (len(self.initData)))    
         self.strategy.inited = True
         self.strategy.onInit()
         self.output(u'策略初始化完成')
@@ -321,10 +325,15 @@ class BacktestingEngine(object):
         # 分批加载回测数据.数据范围:[self.dataStartDate,self.dataEndDate+1)
         begin = start = self.dataStartDate
         stop = self.dataEndDate + timedelta(munutes = 1)
+        i = 1 # 缓存回测数据的起始位置
         self.output(f'开始回放回测数据,回测范围:[{start.strftime(constant.DATETIME)},{end.strftime(constant.DATETIME)})')
         while start<stop:
             end = min(start + timedelta(dataDays), stop)
-            self.backtestData = self.loadHistoryData(start, end)
+            if not prepared_data:
+                self.backtestData = self.loadHistoryData(start, end)
+            else:
+                self.backtestData = prepared_data[i]
+                i+=1
             if len(self.backtestData)==0:
                 break
             else:
@@ -346,6 +355,27 @@ class BacktestingEngine(object):
             dataframe.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
             self.output(u'策略日志已生成')
         
+    #----------------------------------------------------------------------
+    def prepare_data(self):
+        prepared_data = []
+        self.output("预加载优化数据")
+        dataLimit = 1000000
+        if self.mode == self.BAR_MODE:
+            func = self.newBar
+            dataDays = max(dataLimit // (len(self.strategy.symbolList) * 24 * 60), 1)
+        else:
+            func = self.newTick
+            dataDays = max(dataLimit // (len(self.strategy.symbolList) * 24 * 60 * 60 * 5), 1)
+        if self.strategyStartDate != self.dataStartDate:
+            prepared_data += self.loadHistoryData(self.strategy.symbolList, self.strategyStartDate, self.dataStartDate)
+        
+        start = self.dataStartDate
+        stop = self.dataEndDate
+        while start < stop:
+            end = min(start + timedelta(dataDays), stop)
+            prepared_data += self.loadHistoryData(self.strategy.symbolList, start, end, self.mode)
+        
+        return prepared_data    
     #----------------------------------------------------------------------
     def newBar(self, bar):
         """新的K线"""
@@ -378,7 +408,8 @@ class BacktestingEngine(object):
         self.strategy = strategyClass(self, setting)
         self.strategy.name = self.strategy.className
         self.strategy.symbolList = list(self.contractInfo.keys())
-        # self.strategy.symbolList = setting['symbolList']
+        if not self.contractInfo:
+            self.strategy.symbolList = setting['symbolList']
         self.initPosition(self.strategy)
 
     #----------------------------------------------------------------------
@@ -1138,7 +1169,7 @@ class BacktestingEngine(object):
         return resultList
             
     #----------------------------------------------------------------------
-    def runParallelOptimization(self, strategyClass, optimizationSetting):
+    def runParallelOptimization(self, strategyClass, optimizationSetting, prepared_data = []):
         """并行优化参数"""
         import multiprocessing
 
@@ -1159,7 +1190,7 @@ class BacktestingEngine(object):
             l.append(pool.apply_async(optimize, (self.__class__, strategyClass, setting,
                                                  targetName, self.mode,
                                                  self.startDate, self.initHours, self.endDate,
-                                                 self.dbURI, self.dbName, self.contractInfo)))
+                                                 self.dbURI, self.dbName, self.contractInfo, prepared_data)))
         pool.close()
         pool.join()
         
@@ -1554,7 +1585,7 @@ def formatNumber(n):
 #----------------------------------------------------------------------
 def optimize(backtestEngineClass, strategyClass, setting, targetName,
              mode, startDate, initHours, endDate,
-             dbURI, dbName, contractInfo):
+             dbURI, dbName, contractInfo={}, prepared_data = []):
     """多进程优化时跑在每个进程中运行的函数"""
     engine = backtestEngineClass()
     engine.setBacktestingMode(mode)
