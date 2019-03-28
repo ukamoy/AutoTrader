@@ -286,7 +286,7 @@ class BacktestingEngine(object):
             return []
         
     #----------------------------------------------------------------------
-    def runBacktesting(self, prepared_data= []):
+    def runBacktesting(self, prepared_data = [], cache_data =False):
         """运行回测"""
 
         dataLimit = 1000000
@@ -294,18 +294,33 @@ class BacktestingEngine(object):
         # 首先根据回测模式，确认要使用的数据类,以及数据的分批回放范围
         if self.mode == self.BAR_MODE:
             func = self.newBar
-            dataDays = max(dataLimit//(len(self.strategy.symbolList) * 24 * 60),1)
+            dataDays = max(dataLimit // (len(self.contractInfo.keys()) * 24 * 60), 1)
         else:
             func = self.newTick
-            dataDays = max(dataLimit//(len(self.strategy.symbolList) * 24 * 60 * 60 * 5),1)
+            dataDays = max(dataLimit // (len(self.contractInfo.keys()) * 24 * 60 * 60 * 5), 1)
+        
+        if cache_data:  # 为优化缓存数据到内存中
+            self.output("预加载优化数据到内存中")
+            if self.strategyStartDate != self.dataStartDate:
+                prepared_data.append(self.loadHistoryData(self.strategyStartDate, self.dataStartDate))
+            start = self.dataStartDate
+            stop = self.dataEndDate
+            while start < stop:
+                end = min(start + timedelta(dataDays), stop)
+                backtest_data = self.loadHistoryData(start, end)
+                prepared_data.append(backtest_data)
+                if len(backtest_data) == 0:
+                    break
+                else:
+                    start = end
+            return prepared_data
 
+        # 开始回测, 加载初始化数据, 数据范围:[self.strategyStartDate,self.dataStartDate)
         self.output(u'开始回测')
-
-        self.initData = [] # 清空内存里的数据
-        self.backtestData = [] # 清空内存里的数据
-        # 策略初始化
         self.output(u'策略初始化')
-        # 加载初始化数据.数据范围:[self.strategyStartDate,self.dataStartDate)
+        self.initData = []     # 清空内存里的数据
+        self.backtestData = [] # 清空内存里的数据
+
         if self.strategyStartDate == self.dataStartDate:
             self.output(u'策略无请求历史数据初始化')
         else:
@@ -326,7 +341,7 @@ class BacktestingEngine(object):
         begin = start = self.dataStartDate
         stop = self.dataEndDate + timedelta(munutes = 1)
         i = 1 # 缓存回测数据的起始位置
-        self.output(f'开始回放回测数据,回测范围:[{start.strftime(constant.DATETIME)},{end.strftime(constant.DATETIME)})')
+        self.output(f'开始回放回测数据,回测范围:[{begin.strftime(constant.DATETIME)},{stop.strftime(constant.DATETIME)})')
         while start<stop:
             end = min(start + timedelta(dataDays), stop)
             if not prepared_data:
@@ -351,31 +366,10 @@ class BacktestingEngine(object):
         # 日志输出模块
         if self.logActive:
             dataframe = pd.DataFrame(self.logList)
-            filename = os.path.join(self.logPath, u"日志.csv")
+            filename = os.path.join(self.logPath, u"log.csv")
             dataframe.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
-            self.output(u'策略日志已生成')
+            self.output(u'trading log saved')
         
-    #----------------------------------------------------------------------
-    def prepare_data(self):
-        prepared_data = []
-        self.output("预加载优化数据")
-        dataLimit = 1000000
-        if self.mode == self.BAR_MODE:
-            func = self.newBar
-            dataDays = max(dataLimit // (len(self.strategy.symbolList) * 24 * 60), 1)
-        else:
-            func = self.newTick
-            dataDays = max(dataLimit // (len(self.strategy.symbolList) * 24 * 60 * 60 * 5), 1)
-        if self.strategyStartDate != self.dataStartDate:
-            prepared_data += self.loadHistoryData(self.strategy.symbolList, self.strategyStartDate, self.dataStartDate)
-        
-        start = self.dataStartDate
-        stop = self.dataEndDate
-        while start < stop:
-            end = min(start + timedelta(dataDays), stop)
-            prepared_data += self.loadHistoryData(self.strategy.symbolList, start, end, self.mode)
-        
-        return prepared_data    
     #----------------------------------------------------------------------
     def newBar(self, bar):
         """新的K线"""
@@ -658,12 +652,12 @@ class BacktestingEngine(object):
             elif order.direction == constant.DIRECTION_SHORT:
                 order.price = self.roundToPriceTick(vtSymbol, price) / 1000
 
-        balance = strategy.accountDict["balance"]
+        balance = self.strategy.accountDict["balance"]
         if not order.offset == constant.OFFSET_CLOSE:
             if balance < (price * order.totalVolume):
                 self.output("INSUFFICIENT FUND")
             else:
-                strategy.accountDict["balance"] -= price * order.totalVolume
+                self.strategy.accountDict["balance"] -= price * order.totalVolume
 
         # 保存到限价单字典中
         self.workingLimitOrderDict[orderID] = order
@@ -726,7 +720,7 @@ class BacktestingEngine(object):
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] += order.totalVolume
                     self.strategy.eveningDict[order.vtSymbol + '_LONG'] = round(self.strategy.posDict[order.vtSymbol + '_LONG'], 4)
             else:
-                if not (order.direction == contant.DIRECTION_SHORT and order.offset == constant.OFFSET_NONE):
+                if not (order.direction == constant.DIRECTION_SHORT and order.offset == constant.OFFSET_NONE):
                     self.strategy.accountDict["balance"] += order.price * order.volume
             
             self.strategy.onOrder(order)
@@ -976,9 +970,9 @@ class BacktestingEngine(object):
         # 交割单输出模块
         if self.logActive:
             resultDF = pd.DataFrame(deliverSheet)
-            filename = os.path.join(self.logPath, u"交割单.csv")
-            resultDF.to_csv(filename, index=False, sep=',')
-            self.output(u'交割单已生成')
+            filename = os.path.join(self.logPath, u"trading result.csv")
+            resultDF.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
+            self.output(u'trading result saved')
 
         # 然后基于每笔交易的结果，我们可以计算具体的盈亏曲线和最大回撤等
         capital = 0             # 资金
@@ -998,8 +992,12 @@ class BacktestingEngine(object):
         winningResult = 0       # 盈利次数
         losingResult = 0        # 亏损次数		
         totalWinning = 0        # 总盈利金额		
-        totalLosing = 0         # 总亏损金额        
-        
+        totalLosing = 0         # 总亏损金额       
+
+        longPnlList = []        # 多仓盈亏
+        shortPnlList = []       # 空仓盈亏
+        holdingList = []        # 持仓日记录
+
         for result in resultList:
             capital += result.pnl
             maxCapital = max(capital, maxCapital)
@@ -1021,6 +1019,15 @@ class BacktestingEngine(object):
             else:
                 losingResult += 1
                 totalLosing += result.pnl
+
+            if result.volume > 0:
+                longPnlList.append(result.pnl)
+            if result.volume < 0 :
+                shortPnlList.append(result.pnl)
+
+            holdingdays = result.exitDt-result.entryDt
+            holdingList.append(holdingdays)
+
         # 计算盈亏相关数据
         winningRate = winningResult / totalResult * 100  # 胜率
 
@@ -1046,6 +1053,8 @@ class BacktestingEngine(object):
         d['totalSlippage'] = totalSlippage
         d['timeList'] = timeList
         d['pnlList'] = pnlList
+        d['longPnl'] = longPnlList
+        d['shortPnl'] = shortPnlList
         d['capitalList'] = capitalList
         d['drawdownList'] = drawdownList
         d['winningRate'] = winningRate
@@ -1055,6 +1064,7 @@ class BacktestingEngine(object):
         d['posList'] = posList
         d['tradeTimeList'] = tradeTimeList
         d['resultList'] = resultList
+        d['holdingPeriod'] = holdingList
         
         return d
         
@@ -1083,27 +1093,66 @@ class BacktestingEngine(object):
         self.output(u'亏损交易平均值\t%s' % formatNumber(d['averageLosing']))
         self.output(u'盈亏比：\t%s' % formatNumber(d['profitLossRatio']))
 
-        # 绘图
-        fig = plt.figure(figsize=(10, 12))
+        # 绘图 #1
+        fig = plt.figure(figsize=(10, 20))
 
-        pCapital = plt.subplot(4, 1, 1)
+        pCapital = plt.subplot(5, 1, 1)
         pCapital.set_ylabel("capital")
         pCapital.plot(d['capitalList'], color='r', lw=0.8)
 
-        pDD = plt.subplot(4, 1, 2)
+        pDD = plt.subplot(5, 1, 2)
         pDD.set_ylabel("DD")
         pDD.bar(range(len(d['drawdownList'])), d['drawdownList'], color='g')
 
-        pPnl = plt.subplot(4, 1, 3)
+        pPnl = plt.subplot(5, 1, 3)
         pPnl.set_ylabel("pnl")
-        pPnl.hist(d['pnlList'], bins=50, color='c')
+        pPnl.hist(d['pnlList'], color='c')
+
+        plong = plt.subplot(5, 1, 4)
+        plong.set_ylabel("long_pnl")
+        plong.plot(d['longPnl'])
+
+        pshort = plt.subplot(5, 1, 5)
+        pshort.set_ylabel("short_pnl")
+        pshort.plot(d['shortPnl'])
+
 
         # 输出回测统计图
         if self.logActive:
-            filename = os.path.join(self.logPath, u"回测统计图.png")
+            filename = os.path.join(self.logPath, u"pnl.png")
             plt.savefig(filename)
-            self.output(u'策略回测统计图已保存')
+            self.output(u'pnl saved')
+        plt.show()
 
+        # 绘图 #2
+        fig = plt.figure(figsize=(10, 16))
+
+        pPos = plt.subplot(3, 1, 1)
+        pPos.set_ylabel("Position")
+        if d['posList'][-1] == 0:
+            del d['posList'][-1]
+
+        pHold = plt.subplot(3,1,2)
+        pHold.set_ylabel("Holding_Period")
+        pHold.plot(d['holdingPeriod'])
+
+
+        # 输出回测统计图-2
+        if self.logActive:
+            filename = os.path.join(self.logPath, u"holding.png" )
+            plt.savefig(filename)
+            self.output(u'holding saved') 
+            
+            
+            dd={'First Trade':d['timeList'][0],'Last Trade':d['timeList'][-1],'Total Trade':formatNumber(d['totalResult']),'Pnl':formatNumber(d['capital']),
+            'Max DrawDown':formatNumber(min(d['drawdownList'])),'Profit per Trade':formatNumber(d['capital']/d['totalResult']),'Slippage per Trade':formatNumber(d['totalSlippage']/d['totalResult']),
+            'Commission per Trade':formatNumber(d['totalCommission']/d['totalResult']),'Winning Rate':formatNumber(d['winningRate']),'Profit per Trade':formatNumber(d['averageWinning']),
+            'Loss per Trade':formatNumber(d['averageLosing']),'PNL Ratio':formatNumber(d['profitLossRatio']),'Longpos PNL':formatNumber(sum(d['longPnl'])),'Shortpos PNL':formatNumber(sum(d['shortPnl']))}
+            
+            ddresult = pd.DataFrame(dd,index=[0]).T
+            filename = os.path.join(self.logPath, u"BacktestingResult.csv" )
+            ddresult.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
+            self.output(u'BacktestingResult saved') 
         plt.show()
     
     #----------------------------------------------------------------------
@@ -1169,7 +1218,7 @@ class BacktestingEngine(object):
         return resultList
             
     #----------------------------------------------------------------------
-    def runParallelOptimization(self, strategyClass, optimizationSetting, prepared_data = []):
+    def runParallelOptimization(self, strategyClass, optimizationSetting, strategySetting = {}, prepared_data = []):
         """并行优化参数"""
         import multiprocessing
 
@@ -1186,6 +1235,7 @@ class BacktestingEngine(object):
         l = []
 
         for setting in settingList:
+            setting.update(strategySetting)
             self.clearBacktestingResult()  # 清空策略的所有状态（指如果多次运行同一个策略产生的状态）
             l.append(pool.apply_async(optimize, (self.__class__, strategyClass, setting,
                                                  targetName, self.mode,
@@ -1337,6 +1387,13 @@ class BacktestingEngine(object):
             'sharpeRatio': sharpeRatio
         }
 
+        # 输出回测结果
+        if self.logActive:
+            ddresult = pd.DataFrame(result,index=[0]).T
+            filename = os.path.join(self.logPath, u"DailyStatistics.csv" )
+            ddresult.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
+            self.output(u'DailyStatistics saved') 
+
         return df, result
     
     #----------------------------------------------------------------------
@@ -1404,9 +1461,9 @@ class BacktestingEngine(object):
         
         # 输出回测绩效图
         if self.logActive:
-            filename = os.path.join(self.logPath, u"回测绩效图.png")
+            filename = os.path.join(self.logPath, u"DailyResult.png")
             plt.savefig(filename)
-            self.output(u'策略回测绩效图已保存')
+            self.output(u'DailyResult saved')
 
         plt.show()
         
@@ -1596,7 +1653,7 @@ def optimize(backtestEngineClass, strategyClass, setting, targetName,
     engine.setDatabase(dbName)
     
     engine.initStrategy(strategyClass, setting)
-    engine.runBacktesting()
+    engine.runBacktesting(prepared_data)
     
     df = engine.calculateDailyResult()
     df, d = engine.calculateDailyStatistics(df)
