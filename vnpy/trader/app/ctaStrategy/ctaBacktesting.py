@@ -399,11 +399,14 @@ class BacktestingEngine(object):
         初始化策略
         setting是策略的参数设置，如果使用类中写好的默认设置则可以不传该参数
         """
+
+        if not self.contractInfo:
+            for symbol in setting['symbolList']:
+                self.contractInfo.update({symbol:{}})
+        else:
+            setting['symbolList'] = list(self.contractInfo.keys())
         self.strategy = strategyClass(self, setting)
         self.strategy.name = self.strategy.className
-        self.strategy.symbolList = list(self.contractInfo.keys())
-        if not self.contractInfo:
-            self.strategy.symbolList = setting['symbolList']
         self.initPosition(self.strategy)
 
     #----------------------------------------------------------------------
