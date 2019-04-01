@@ -912,14 +912,9 @@ class CtaEngine(object):
                 self.cancelStopOrder(orderID)
 
     #----------------------------------------------------------------------
-    def getPriceTick(self, strategy):
+    def getContract(self, vtSymbol):
         """获取最小价格变动"""
-
-        for vtSymbol in strategy.symbolList:
-            contract = self.mainEngine.getContract(vtSymbol)
-            if contract:
-                return contract.priceTick
-            return 0
+        return self.mainEngine.getContract(vtSymbol)
 
     #--------------------------------------------------------------
     def loadHistoryBar(self,vtSymbol,type_,size = None,since = None):

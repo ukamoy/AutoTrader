@@ -236,6 +236,7 @@ class OkexGateway(VtGateway):
             subGateway["REST"].queryMonoAccount(subGateway['symbols'])
             subGateway["REST"].queryMonoPosition(subGateway['symbols'])
             subGateway["REST"].queryOrder()
+            subGateway["REST"].queryContract()
 
     def initPosition(self, vtSymbol):
         symbol = vtSymbol.split(VN_SEPARATOR)[0]

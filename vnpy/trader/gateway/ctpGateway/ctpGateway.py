@@ -466,7 +466,6 @@ class CtpMdApi(MdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -494,7 +493,6 @@ class CtpMdApi(MdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
-            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -513,7 +511,6 @@ class CtpMdApi(MdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
-            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -763,7 +760,6 @@ class CtpTdApi(TdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
-            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
             # 标识登录失败，防止用错误信息连续重复登录
@@ -786,7 +782,6 @@ class CtpTdApi(TdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
-            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -831,7 +826,6 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -851,7 +845,6 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1084,14 +1077,13 @@ class CtpTdApi(TdApi):
         contract.exchange = exchangeMapReverse[data['ExchangeID']]
         contract.vtSymbol = VN_SEPARATOR.join([contract.symbol, contract.gatewayName])
         contract.name = data['InstrumentName']
-        #contract.name = data['InstrumentName'].decode('GBK')
 
         # 合约数值
         contract.size = data['VolumeMultiple']
         contract.priceTick = data['PriceTick']
         contract.strikePrice = data['StrikePrice']
         contract.underlyingSymbol = data['UnderlyingInstrID']
-
+        contract.expiryDate = data['ExpireDate']
         contract.productClass = productClassMapReverse.get(data['ProductClass'], PRODUCT_UNKNOWN)
 
         # 期权类型
@@ -1278,7 +1270,6 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1443,7 +1434,6 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1454,7 +1444,6 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
-        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------

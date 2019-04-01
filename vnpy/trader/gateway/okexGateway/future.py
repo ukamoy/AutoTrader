@@ -65,6 +65,7 @@ class OkexfRestApi(RestClient):
 
         self.contractMap= {}
         self.contractMapReverse = {}
+        self.matureDate = None
 
     #----------------------------------------------------------------------
     def connect(self, REST_HOST, leverage, sessionCount):
@@ -229,6 +230,7 @@ class OkexfRestApi(RestClient):
 
         for oid, symbol in self.missing_order_Dict.items():
             self.queryMonoOrder(symbol, oid)
+        
 
     def queryMonoOrder(self,symbol,oid):
         path = f'/api/futures/v3/orders/{symbol}/{oid}'
@@ -385,7 +387,7 @@ class OkexfRestApi(RestClient):
         """[{"instrument_id":"ETH-USD-190329","underlying_index":"ETH","quote_currency":"USD",
         "tick_size":"0.001","contract_val":"10","listing":"2018-12-14","delivery":"2019-03-29",
         "trade_increment":"1","alias":"quarter"}]"""
-        # matureDate = set()
+        matureDateList = []
         for data in d:
             contract = VtContractData()
             contract.gatewayName = self.gatewayName
@@ -396,26 +398,14 @@ class OkexfRestApi(RestClient):
             contract.productClass = PRODUCT_FUTURES
             contract.priceTick = float(data['tick_size'])
             contract.size = int(data['trade_increment'])
+            contract.expiryDate = data['delivery'] + " 16:00:00"
             contract.minVolume = 1
             
             self.contractDict[contract.symbol] = contract
             self.contractMap[contract.symbol] = "-".join([data['underlying_index'], str.upper(data['alias']).replace("_","-")])
-            # matureDate.add(str(d['instrument_id'])[8:])
+            matureDateList.append(contract.expiryDate)
             
         self.gateway.writeLog(u'OKEX 交割合约信息查询成功')
-
-        ## map v1 symbol to contract
-        # contractConversion = {}
-        # contractConversion[str(min(matureDate))] = "this_week"
-        # contractConversion[str(max(matureDate))] ="quarter"
-        # matureDate.remove(min(matureDate))
-        # matureDate.remove(max(matureDate))
-        # contractConversion[str(list(matureDate)[0])] = "next_week"
-
-        # for contract in list(self.contractDict.keys()):
-        #     currency = str(contract[:3])
-        #     contract_type = contractConversion[str(contract[8:])]
-        #     self.contractMap[contract] = "_".join([currency,contract_type])
 
         for contract_symbol, universal_symbol in self.contractMap.items():
             contract = self.contractDict[contract_symbol]
@@ -427,6 +417,7 @@ class OkexfRestApi(RestClient):
         self.queryOrder()
         self.queryAccount()
         self.queryPosition()
+        self.matureDate = min(matureDateList)
         
     #----------------------------------------------------------------------
     def processAccountData(self, data, currency):
