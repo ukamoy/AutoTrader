@@ -60,8 +60,7 @@ class BacktestingEngine(object):
 
         self.cachePath = os.path.join(os.path.expanduser("~"), "vnpy_data")       # 本地数据缓存地址
         self.logActive = False      # 回测日志开关
-        self.logFolderName = f"Backtest_Report_{datetime.now().strftime('%y%m%d%H%M%S')}" # 当次日志文件夹名称
-        self.logPath = os.path.join(os.getcwd(), "Backtest_Log", self.logFolderName)  # 回测日志自定义路径
+        self.logPath = os.path.join(os.getcwd(), "Backtest_Log")  # 回测日志自定义路径
 
         self.dataStartDate = None       # 回测数据开始日期，datetime对象
         self.dataEndDate = None         # 回测数据结束日期，datetime对象
@@ -161,11 +160,8 @@ class BacktestingEngine(object):
     def setLog(self, active = False, path = None):
         """设置是否出交割单和日志"""
         if path:
-            self.logPath = os.path.join(path, self.logFolderName)
+            self.logPath = path
         self.logActive = active
-        if self.logActive:
-            if not os.path.isdir(self.logPath):
-                os.makedirs(self.logPath)
 
     #----------------------------------------------------------------------
     def setCachePath(self, path):
@@ -256,6 +252,7 @@ class BacktestingEngine(object):
                                             data_df[(data_df.datetime >= start) & (data_df.datetime < end)].to_dict(
                                                 "record")]
                             # 缓存到本地文件
+                            save_path = os.path.join(self.cachePath, self.mode, symbol.replace(":", "_"))
                             if not os.path.isdir(save_path):
                                 os.makedirs(save_path)
 
@@ -265,7 +262,7 @@ class BacktestingEngine(object):
                             for date in symbols_no_data[symbol]:
                                 update_df = data_df[data_df["date"] == date]
                                 if update_df.size > 0:
-                                    update_df.to_hdf(f"{save_path}/{date}.hd5", "/", append=True)
+                                    update_df.to_hdf(f"{save_path}/{date}.hd5", "/", format = "table", append=True, complevel=9)
 
                             acq, need = len(list(set(data_df[modeMap[self.mode]]))), len(need_datetimes)
                             self.output(f"{symbol}： 从数据库存取了{acq}, 应补{need}, 缺失了{need-acq}")
@@ -365,10 +362,11 @@ class BacktestingEngine(object):
 
         # 日志输出模块
         if self.logActive:
-            dataframe = pd.DataFrame(self.logList)
-            filename = os.path.join(self.logPath, u"log.csv")
-            dataframe.to_csv(filename, index=False, sep=',', encoding="utf_8_sig")
-            self.output(u'trading log saved')
+            filename = os.path.join(self.logPath, u"Backtesting.log")
+            f = open(filename, "w+")
+            for line in self.logList:
+                print(f"{line}", file = f)
+            self.output(u'Backtesting log Recorded')
         
     #----------------------------------------------------------------------
     def newBar(self, bar):
@@ -392,7 +390,18 @@ class BacktestingEngine(object):
         self.strategy.onTick(tick)
 
         self.updateDailyClose(tick.vtSymbol, tick.datetime, tick.lastPrice)
-        
+
+    # ----------------------------------------------------------------------
+    def createFolder(self, symbolList):
+        alpha='abcdefghijklmnopqrstuvwxyz'
+        filter_text = "0123456789._-" + alpha + alpha.upper()
+        new_name = filter(lambda ch: ch in filter_text, str(symbolList))
+        symbol_name = ''.join(list(new_name))
+        Folder_Name = f'{self.strategy.name.replace("Strategy","")}_{symbol_name}_{datetime.now().strftime("%y%m%d%H%M")}'
+        self.logPath = os.path.join(self.logPath, Folder_Name[:50])
+        if not os.path.isdir(self.logPath):
+            os.makedirs(self.logPath)
+
     #----------------------------------------------------------------------
     def initStrategy(self, strategyClass, setting=None):
         """
@@ -408,6 +417,10 @@ class BacktestingEngine(object):
         self.strategy = strategyClass(self, setting)
         self.strategy.name = self.strategy.className
         self.initPosition(self.strategy)
+
+        # 初始化日志文件夹
+        if self.logActive:
+            self.createFolder(setting['symbolList'])
 
     #----------------------------------------------------------------------
     def crossLimitOrder(self, data):
