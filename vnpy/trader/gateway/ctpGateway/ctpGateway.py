@@ -16,9 +16,7 @@ from vnpy.api.ctp import MdApi, TdApi, defineDict
 from vnpy.trader.vtGateway import *
 from vnpy.trader.vtFunction import getJsonPath, getTempPath
 from vnpy.trader.vtConstant import GATEWAYTYPE_FUTURES
-from jaqs.data import DataView,RemoteDataService
 from .language import text
-
 
 # 以下为一些VT类型和CTP类型的映射字典
 # 价格类型映射
@@ -102,8 +100,6 @@ class CtpGateway(VtGateway):
 
         self.fileName = self.gatewayName + '_connect.json'
         self.filePath = getJsonPath(self.fileName, __file__)
-        self.trade_days = None
-        self.current_datetime = None
 
     #----------------------------------------------------------------------
     def connect(self):
@@ -125,8 +121,6 @@ class CtpGateway(VtGateway):
             brokerID = str(setting['brokerID'])
             tdAddress = str(setting['tdAddress'])
             mdAddress = str(setting['mdAddress'])
-            jaqsUser = str(setting['jaqs_username'])
-            jaqsPass = str(setting['jaqs_password'])
 
             # 如果json文件提供了验证码
             if 'authCode' in setting:
@@ -148,36 +142,12 @@ class CtpGateway(VtGateway):
         self.mdApi.connect(userID, password, brokerID, mdAddress)
         self.tdApi.connect(userID, password, brokerID, tdAddress,authCode, userProductInfo)
 
-        # 连接jaqs
-        if jaqsUser and jaqsPass:
-            data_config = {
-                        "remote.data.address": "tcp://data.quantos.org:8910",
-                        "remote.data.username": jaqsUser,
-                        "remote.data.password": jaqsPass
-                        }
-            self.ds = RemoteDataService()
-            self.ds.init_from_config(data_config)
-            self.trade_days = self.ds.query_trade_dates(19910101, 20291231)
-        # log.logContent = u'jaqs连接成功'
-        # self.onLog(log)
-
-
         # 初始化并启动查询
         setQryEnabled = setting.get('setQryEnabled', False)
         self.setQryEnabled(setQryEnabled)
 
         setQryFreq = setting.get('setQryFreq', 60)
         self.initQuery(setQryFreq)
-
-    # def update_current_datetime(self, dt):
-    #     if self.current_datetime is None or dt > self.current_datetime:
-    #         self.current_datetime = dt
-
-    # def onTick(self, tick):
-    #     super(CtpGateway, self).onTick(tick)
-    #     if tick.datetime is None:
-    #         tick.datetime = datetime.strptime(' '.join([tick.date, tick.time]), '%Y%m%d %H:%M:%S.%f')
-    #     self.update_current_datetime(tick.datetime)
         
     #----------------------------------------------------------------------
     def subscribe(self, subscribeReq):
@@ -204,6 +174,10 @@ class CtpGateway(VtGateway):
         """查询持仓"""
         self.tdApi.qryPosition()
 
+    def qryInfo(self):
+        self.qryPosition()
+        self.qryAccount()
+
     #----------------------------------------------------------------------
     def close(self):
         """关闭"""
@@ -217,7 +191,7 @@ class CtpGateway(VtGateway):
         """初始化连续查询"""
         if self.qryEnabled:
             # 需要循环的查询函数列表
-            self.qryFunctionList = [self.qryAccount, self.qryPosition]
+            self.qryFunctionList = [self.qryInfo]
             self.qryCount = 0           # 查询触发倒计时
             self.qryTrigger = freq      # 查询触发点
             self.qryNextFunction = 0    # 上次运行的查询函数索引
@@ -252,149 +226,8 @@ class CtpGateway(VtGateway):
         """设置是否要启动循环查询"""
         self.qryEnabled = qryEnabled
 
-    # def _select_trade_days(self, start, end):
-    #     s = self.trade_days.searchsorted(start) if start else 0
-    #     e = self.trade_days.searchsorted(end, "right")
-    #     return self.trade_days[s:e]
-
-    # def make_dt(self, date, time):
-    #     day, month, year = list(self.split_time(date))
-    #     second, minute, hour = list(self.split_time(time))
-    #     return datetime(year, month, day, hour, minute, second)
-    
-    # @staticmethod
-    # def split_time(time):
-    #     for i in range(2):
-    #         yield time % 100
-    #         time = int(time/100)
-    #     yield time
-
     def loadHistoryBar(self, vtSymbol, type_, size=None, since=None):
-        if type_ not in ['1min','5min','15min']:
-            log = VtLogData()
-            log.gatewayName = self.gatewayName
-            log.logContent = u'CTP初始化数据只接受1分钟,5分钟，15分钟bar'
-            self.onLog(log)
-            return
-        typeMap = {}
-        typeMap['1min'] = '1M'
-        typeMap['5min'] = '5M'
-        typeMap['15min'] = '15M'
-        freq_map = {
-            "1min": "1M",
-            "5min": "5M",
-            "15min": "15M"
-        }
-
-        freq_delta = {
-            "1M": timedelta(minutes=1),
-            "5M": timedelta(minutes=5),
-            "15M": timedelta(minutes=15),
-        }
-
-        symbol = vtSymbol.split(':')[0]
-        exchange = symbolExchangeDict.get(symbol, EXCHANGE_UNKNOWN)
-
-        if exchangeMap[EXCHANGE_SHFE] in exchange:
-            exchange = 'SHF'
-        elif exchangeMap[EXCHANGE_CFFEX] in exchange:
-            exchange = 'CFE'
-        elif exchangeMap[EXCHANGE_CZCE] in exchange:
-            exchange = 'CZC'
-        symbol = symbol + '.' + exchange
-        freq = typeMap[type_]
-        delta = freq_delta[freq]
-        if since:
-            start = int(since)
-        else:
-            start = None
-        end = self.current_datetime or datetime.now()
-        end = end.year*10000+end.month*100+end.day
-        days = self._select_trade_days(start, end)
-        results = {}
-        
-        if start is None:
-            days = reversed(days)
-        
-        length = 0
-        for date in days:
-            bar, msg = self.ds.bar(symbol, trade_date=date, freq=freq)
-            if msg != "0,":
-                raise Exception(msg)
-            bar["datetime"] = list(map(self.make_dt, bar.date, bar.time))
-            bar["datetime"] -= delta
-            results[date] = bar[self.BARCOLUMN]
-            length += len(bar)
-            if size and (length >= size):
-                break
-        
-        data = pd.concat([results[date] for date in sorted(results.keys())], ignore_index=True)
-        if size:
-            if since:
-                data = data.iloc[:size]
-            else:
-                data = data.iloc[-size:]
-        return data        
-
-    # NOTE: Depreciated
-    # def _loadHistoryBar_old(self, vtSymbol, type_, size= None, since = None):
-    #     if size and not since:
-    #         log = VtLogData()
-    #         log.gatewayName = self.gatewayName
-    #         log.logContent = u'CTP初始化数据请使用since参数，size无效'
-    #         self.onLog(log)
-    #         return
-
-    #     if type_ not in ['1min','5min','15min']:
-    #         log = VtLogData()
-    #         log.gatewayName = self.gatewayName
-    #         log.logContent = u'CTP初始化数据只接受1分钟,5分钟，15分钟bar'
-    #         self.onLog(log)
-    #         return
-    #     typeMap = {}
-    #     typeMap['1min'] = '1M'
-    #     typeMap['5min'] = '5M'
-    #     typeMap['15min'] = '15M'
-    #     freq_map = {
-    #         "1min": "1M",
-    #         "5min": "5M",
-    #         "15min": "15M"
-    #     }
-
-    #     freq_delta = {
-    #         "1M": timedelta(minutes=1),
-    #         "5M": timedelta(minutes=5),
-    #         "15M": timedelta(minutes=15),
-    #     }
-
-    #     symbol = vtSymbol.split(':')[0]
-    #     exchange = symbolExchangeDict.get(symbol, EXCHANGE_UNKNOWN)
-
-    #     if exchangeMap[EXCHANGE_SHFE] in exchange:
-    #         exchange = 'SHF'
-    #     elif exchangeMap[EXCHANGE_CFFEX] in exchange:
-    #         exchange = 'CFE'
-    #     elif exchangeMap[EXCHANGE_CZCE] in exchange:
-    #         exchange = 'CZC'
-
-    #     symbol = symbol + '.' + exchange
-
-    #     if self.ds:
-    #         result= pd.DataFrame(columns=['datetime','open','close','high','low','volume'])
-    #         start_time = since#.strftime('%Y%m%d')
-    #         end_time = datetime.now().strftime('%Y%m%d')
-    #         tradeDays=self.ds.query_trade_dates(start_time,end_time)
-
-    #         for trade_date in tradeDays:
-    #             minutebar,msg=self.ds.bar(symbol=symbol,start_time=190000,end_time=185959,trade_date=trade_date, freq=typeMap[type_],fields="")
-    #             minutebar['datetime'] = minutebar['date'].map(lambda x: str(x)) +' '+ minutebar['time'].map(lambda x: str(x).zfill(6))
-    #             minutebar['datetime'] = minutebar['datetime'].map(lambda x : datetime.strptime(x,"%Y%m%d %H%M%S"))
-            
-    #             minute=minutebar[['datetime','open','close','high','low','volume']]
-    #             result=result.append(minute)
-
-    #         result["datetime"] = result["datetime"] - freq_delta[typeMap[type_]]
-    #         return result
+        pass
 
     def qryAllOrders(self, vtSymbol, order_id, status= None):
         pass
@@ -1672,7 +1505,7 @@ class CtpTdApi(TdApi):
         pass
 
     #----------------------------------------------------------------------
-    def connect(self, userID, password, brokerID, address, authCode, userProductInfo = 'CTP'):
+    def connect(self, userID, password, brokerID, address, authCode, userProductInfo):
         """初始化连接"""
         self.userID = userID                # 账号
         self.password = password            # 密码
