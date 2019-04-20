@@ -2,8 +2,4 @@ pymongo
 websocket-client==0.48.0
 qdarkstyle
 SortedContainers
-python-snappy
-flask-restful
-flask-socketio
-jaqs
 requests
