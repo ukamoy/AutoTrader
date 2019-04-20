@@ -21,7 +21,6 @@ from vnpy.api.bitmex import BitmexRestApi, BitmexWebsocketApiWithHeartbeat as Bi
 from vnpy.api.bitmex.utils import hmac_new
 from vnpy.trader.vtGateway import *
 from vnpy.trader.vtFunction import getJsonPath, getTempPath
-from vnpy.trader.app.ctaStrategy import CtaTemplate
 
 # 委托状态类型映射
 statusMapReverse = {}
@@ -626,20 +625,6 @@ class WebsocketApi(BitmexWebsocketApi):
         """接口断开"""
         self.gateway.connected = False
         self.writeLog(u'Websocket API连接断开')
-
-
-class BitmexCtaTemplate(CtaTemplate):
-    def setLeverage(self, symbol, leverage):
-        symbolName, gatewayName = symbol.split(VN_SEPARATOR)[-1]
-        gateway = self.engine.getGateway()
-        assert isinstance(gateway, BitmexGateway), "只能对bitmex交易所的symbol调用setLeverage方法" 
-        return gateway.setLeverage(symbolName, leverage)
-
-    def getLeverage(self, symbol):
-        symbolName, gatewayName = symbol.split(VN_SEPARATOR)[-1]
-        gateway = self.engine.getGateway()
-        assert isinstance(gateway, BitmexGateway), "只能对bitmex交易所的symbol调用getLeverage方法" 
-        return gateway.getLeverage(symbolName, leverage)
 
 #----------------------------------------------------------------------
 def printDict(d):
