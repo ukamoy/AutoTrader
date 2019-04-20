@@ -60,28 +60,41 @@ class MainEngine(object):
         gatewayTypeMap = {}
         
         # 创建接口实例
-        for idx, name in enumerate(gatewayName):
-            self.gatewayDict[name] = gatewayModule.gatewayClass(self.eventEngine, 
-                                                                name)
-        
+        if type(gatewayName) == list:
+            for idx, name in enumerate(gatewayName):
+                self.gatewayDict[name] = gatewayModule.gatewayClass(self.eventEngine, 
+                                                                    name)
+            
+                # 设置接口轮询
+                if gatewayModule.gatewayQryEnabled:
+                    self.gatewayDict[name].setQryEnabled(gatewayModule.gatewayQryEnabled)
+                        
+                # 保存接口详细信息
+                d = {
+                    'gatewayName': gatewayModule.gatewayName,
+                    'gatewayDisplayName': gatewayModule.gatewayDisplayName[idx],
+                    'gatewayType': gatewayModule.gatewayType
+                }
+                self.gatewayDetailList.append(d)
+        else:
+            self.gatewayDict[gatewayName] = gatewayModule.gatewayClass(self.eventEngine, 
+                                                                    gatewayName)
+            
             # 设置接口轮询
             if gatewayModule.gatewayQryEnabled:
-                self.gatewayDict[name].setQryEnabled(gatewayModule.gatewayQryEnabled)
+                self.gatewayDict[gatewayName].setQryEnabled(gatewayModule.gatewayQryEnabled)
                     
             # 保存接口详细信息
             d = {
-                'gatewayName': gatewayModule.name,
-                'gatewayDisplayName': gatewayModule.gatewayDisplayName[idx],
+                'gatewayName': gatewayModule.gatewayName,
+                'gatewayDisplayName': gatewayModule.gatewayDisplayName,
                 'gatewayType': gatewayModule.gatewayType
             }
             self.gatewayDetailList.append(d)
         
         for gateway in self.gatewayDetailList:
-            gatewayName, base_string = gateway['gatewayName'].split('_connect.json')
             gatewayTypeMap[gatewayName] = gateway['gatewayType']
             
-        
-
         # 遍历当前目录下的所有文件
         files=os.listdir(".")
         for file_ in files:
