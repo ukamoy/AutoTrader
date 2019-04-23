@@ -171,44 +171,33 @@ class BitfinexGateay(VtGateway):
         """设置是否要启动循环查询"""
         self.qryEnabled = qryEnabled
 
-    def loadHistoryBar(self,vtSymbol,type_,size = None, since = None):
-        url = 'https://www.binance.co/api/v1/klines?'
+    def loadHistoryBar(self, vtSymbol, type_, size = None, since = None):
         symbol = vtSymbol.split(':')[0]
-        if 'USD' in symbol:
-            symbol = symbol.replace('USD','USDT')
+        
         typeMap = {}
         typeMap['1min'] = '1m'
         typeMap['5min'] = '5m'
         typeMap['15min'] = '15m'
         typeMap['30min'] = '30m'
         typeMap['60min'] = '1h'
-        typeMap['120min'] = '2h'
-        typeMap['240min'] = '4h'
+        typeMap['360min'] = '6h'
 
-        params = {
-            'symbol': symbol,
-            'interval': typeMap[type_]
-        }
+        url = f'https://api.bitfinex.com/v2/candles/trade:{typeMap[type_]}:t{symbol}/hist'
+
+        params = {}
         if size:
             params['limit'] = size
         if since:
-            params['startTime'] = since
-        # if endTime:
-        #     params['endTime'] = endTime
+            params['start'] = since
 
         r = requests.get(url, headers={
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json'
         }, params=params, timeout=10)
-        text = json.loads(r.content)
-        df = pd.DataFrame(text, columns=[
-            "opentime", "open", "high", "low", "close", "volume", "closetime", "Quote", "trades", "buybase", "buyquote", "ignore"])
-        df["datetime"] = df["opentime"].map(lambda x: datetime.fromtimestamp(x / 1000))
-        df['volume'] = df['volume'].map(lambda x:float(x))
-        df['open'] = df['open'].map(lambda x: float(x))
-        df['high'] = df['high'].map(lambda x: float(x))
-        df['low'] = df['low'].map(lambda x: float(x))
-        df['close'] = df['close'].map(lambda x: float(x))
+
+        df = pd.DataFrame(r.json(), columns=["MTS", "open", "close", "high", "low", "volume"])
+        df["datetime"] = df["MTS"].map(lambda x: datetime.fromtimestamp(x / 1000))
+        df[["open", "close", "high", "low", "volume"]] = df[["open", "close", "high", "low", "volume"]].map(lambda x:float(x))
 
         return df
 
