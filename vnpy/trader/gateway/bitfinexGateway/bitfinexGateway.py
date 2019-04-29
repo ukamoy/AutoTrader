@@ -199,7 +199,7 @@ class BitfinexGateay(VtGateway):
 
         df = pd.DataFrame(r.json(), columns=["MTS", "open", "close", "high", "low", "volume"])
         df["datetime"] = df["MTS"].map(lambda x: datetime.fromtimestamp(x / 1000))
-        df[["open", "close", "high", "low", "volume"]] = df[["open", "close", "high", "low", "volume"]].map(lambda x:float(x))
+        df[["open", "close", "high", "low", "volume"]] = df[["open", "close", "high", "low", "volume"]].applymap(lambda x:float(x))
 
         return df
 
@@ -603,35 +603,35 @@ class GatewayApi(BitfinexApi):
 
 
     def onWallet(self, data):
-    # 获取钱包信息，注意这里交互获取的方式，本次定义的是现货账户，希望是margin 账户信息
-    """
-    账户信息推送，这里的三种账户类型
-    确定是包含有账户信息的数据，在bitfinex 账户有三种类，magin,exchange,bunding
-    数据举例：
-    WALLET_TYPE	           string	Wallet name (exchange, margin, funding)
-    CURRENCY	           string	Currency (fUSD, etc)
-    BALANCE	               float	   Wallet balance
-    UNSETTLED_INTEREST	   float	Unsettled interest
-    BALANCE_AVAILABLE	   float / null	Amount not tied up in active orders, positions or funding (null if the value is not fresh enough).
-    :param data:    Wallet name (exchange, margin, funding)
-    :return:
-    数据会一行一行传递到data 之中去
+        # 获取钱包信息，注意这里交互获取的方式，本次定义的是现货账户，希望是margin 账户信息
+        """
+        账户信息推送，这里的三种账户类型
+        确定是包含有账户信息的数据，在bitfinex 账户有三种类，magin,exchange,bunding
+        数据举例：
+        WALLET_TYPE	           string	Wallet name (exchange, margin, funding)
+        CURRENCY	           string	Currency (fUSD, etc)
+        BALANCE	               float	   Wallet balance
+        UNSETTLED_INTEREST	   float	Unsettled interest
+        BALANCE_AVAILABLE	   float / null	Amount not tied up in active orders, positions or funding (null if the value is not fresh enough).
+        :param data:    Wallet name (exchange, margin, funding)
+        :return:
+        数据会一行一行传递到data 之中去
 
-        [0, 'ws', [['funding', 'USD', 1200.00951753, 0, None],
-                   ['exchange', 'ADD', 0.3840261, 0, None],
-                   ['exchange', 'ATD', 0.76805219, 0, None],
-                   ['exchange', 'IQX', 3.84026097, 0, None],
-                   ['exchange', 'MTO', 0.3840261, 0, None],
-                   ['margin', 'ETC', 0.00079896, 0, None],
-                   ['margin', 'ETH', 0.00885465, 0, None],
-                   ['margin', 'USD', 22.07734697, 0, None],
-                   ['exchange', 'USD', 0.80073412, 0, None],
-                   ['margin', 'BAB', 0.00421102, 0, None],
-                   ['margin', 'BSV', 0.00421102, 0, None]
-                   ]
-                ]
+            [0, 'ws', [['funding', 'USD', 1200.00951753, 0, None],
+                    ['exchange', 'ADD', 0.3840261, 0, None],
+                    ['exchange', 'ATD', 0.76805219, 0, None],
+                    ['exchange', 'IQX', 3.84026097, 0, None],
+                    ['exchange', 'MTO', 0.3840261, 0, None],
+                    ['margin', 'ETC', 0.00079896, 0, None],
+                    ['margin', 'ETH', 0.00885465, 0, None],
+                    ['margin', 'USD', 22.07734697, 0, None],
+                    ['exchange', 'USD', 0.80073412, 0, None],
+                    ['margin', 'BAB', 0.00421102, 0, None],
+                    ['margin', 'BSV', 0.00421102, 0, None]
+                    ]
+                    ]
 
-    """
+        """
         if str(data[0]) == 'margin':
             account = VtAccountData()
             account.gatewayName = self.gatewayName

@@ -987,7 +987,7 @@ class CtaEngine(object):
 
                 except:
                     print('-' * 20)
-                    print(('Failed to import strategy file %s:' %moduleName))
+                    print('Failed to import strategy file %s:' %moduleName)
                     traceback.print_exc()
 
         return STRATEGY_GET_CLASS
