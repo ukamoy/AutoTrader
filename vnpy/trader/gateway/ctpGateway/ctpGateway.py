@@ -15,8 +15,12 @@ import pandas as pd
 from vnpy.api.ctp import MdApi, TdApi, defineDict
 from vnpy.trader.vtGateway import *
 from vnpy.trader.vtFunction import getJsonPath, getTempPath
-from vnpy.trader.vtConstant import GATEWAYTYPE_FUTURES
+from vnpy.trader.vtConstant import GATEWAYTYPE_FUTURES, VN_SEPARATOR
 from .language import text
+import re
+import pymongo
+from vnpy.trader.vtGlobal import globalSetting
+
 
 # 以下为一些VT类型和CTP类型的映射字典
 # 价格类型映射
@@ -71,6 +75,7 @@ statusMap[STATUS_ALLTRADED] = defineDict["THOST_FTDC_OST_AllTraded"]
 statusMap[STATUS_PARTTRADED] = defineDict["THOST_FTDC_OST_PartTradedQueueing"]
 statusMap[STATUS_NOTTRADED] = defineDict["THOST_FTDC_OST_NoTradeQueueing"]
 statusMap[STATUS_CANCELLED] = defineDict["THOST_FTDC_OST_Canceled"]
+statusMap[STATUS_SUBMITTED] = defineDict["THOST_FTDC_OAS_Submitted"]
 statusMapReverse = {v:k for k,v in list(statusMap.items())}
 
 # 全局字典, key:symbol, value:exchange
@@ -100,6 +105,15 @@ class CtpGateway(VtGateway):
 
         self.fileName = self.gatewayName + '_connect.json'
         self.filePath = getJsonPath(self.fileName, __file__)
+        self.trade_days = None
+        self.current_datetime = None
+
+        self.dbURI = None
+        self.dbName = None
+
+        self.jaqsUser = None
+        self.jaqsPass = None
+        self.ds = None
 
     #----------------------------------------------------------------------
     def connect(self):
@@ -125,11 +139,11 @@ class CtpGateway(VtGateway):
             # 如果json文件提供了验证码
             if 'authCode' in setting:
                 authCode = str(setting['authCode'])
-                userProductInfo = str(setting['userProductInfo'])
+                appid = str(setting['appid'])
                 self.tdApi.requireAuthentication = True
             else:
                 authCode = None
-                userProductInfo = None
+                appid = None
 
         except KeyError:
             log = VtLogData()
@@ -140,7 +154,7 @@ class CtpGateway(VtGateway):
 
         # 创建行情和交易接口对象
         self.mdApi.connect(userID, password, brokerID, mdAddress)
-        self.tdApi.connect(userID, password, brokerID, tdAddress,authCode, userProductInfo)
+        self.tdApi.connect(userID, password, brokerID, tdAddress,authCode, appid)
 
         # 初始化并启动查询
         setQryEnabled = setting.get('setQryEnabled', False)
@@ -148,6 +162,33 @@ class CtpGateway(VtGateway):
 
         setQryFreq = setting.get('setQryFreq', 60)
         self.initQuery(setQryFreq)
+
+        self.dbURI = setting.get('mongoDbURI',None)
+        self.dbName = setting.get('mongoDbName',None)
+
+        self.jaqsUser = setting.get('jaqsUser',None)
+        self.jaqsPass = setting.get('jaqsPass',None)
+
+        if not self.dbURI and self.jaqsUser:
+            from jaqs.data import DataView,RemoteDataService
+            data_config = {
+                        "remote.data.address": "tcp://data.quantos.org:8910",
+                        "remote.data.username": self.jaqsUser,
+                        "remote.data.password": self.jaqsPass
+                        }
+            self.ds = RemoteDataService()
+            self.ds.init_from_config(data_config)
+            self.trade_days = self.ds.query_trade_dates(19910101, 20291231)
+
+    def update_current_datetime(self, dt):
+        if self.current_datetime is None or dt > self.current_datetime:
+            self.current_datetime = dt
+
+    def onTick(self, tick):
+        super(CtpGateway, self).onTick(tick)
+        if tick.datetime is None:
+            tick.datetime = datetime.strptime(' '.join([tick.date, tick.time]), '%Y%m%d %H:%M:%S.%f')
+        self.update_current_datetime(tick.datetime)
         
     #----------------------------------------------------------------------
     def subscribe(self, subscribeReq):
@@ -174,10 +215,6 @@ class CtpGateway(VtGateway):
         """查询持仓"""
         self.tdApi.qryPosition()
 
-    def qryInfo(self):
-        self.qryPosition()
-        self.qryAccount()
-
     #----------------------------------------------------------------------
     def close(self):
         """关闭"""
@@ -191,7 +228,7 @@ class CtpGateway(VtGateway):
         """初始化连续查询"""
         if self.qryEnabled:
             # 需要循环的查询函数列表
-            self.qryFunctionList = [self.qryInfo]
+            self.qryFunctionList = [self.qryAccount, self.qryPosition]
             self.qryCount = 0           # 查询触发倒计时
             self.qryTrigger = freq      # 查询触发点
             self.qryNextFunction = 0    # 上次运行的查询函数索引
@@ -226,14 +263,132 @@ class CtpGateway(VtGateway):
         """设置是否要启动循环查询"""
         self.qryEnabled = qryEnabled
 
+    def _select_trade_days(self, start, end):
+        s = self.trade_days.searchsorted(start) if start else 0
+        e = self.trade_days.searchsorted(end, "right")
+        return self.trade_days[s:e]
+
+    def make_dt(self, date, time):
+        day, month, year = list(self.split_time(date))
+        second, minute, hour = list(self.split_time(time))
+        return datetime(year, month, day, hour, minute, second)
+    
+    @staticmethod
+    def split_time(time):
+        for i in range(2):
+            yield time % 100
+            time = int(time/100)
+        yield time
+
     def loadHistoryBar(self, vtSymbol, type_, size=None, since=None):
-        pass
+        # if type_ not in ['1min','5min','15min']:
+        #     log = VtLogData()
+        #     log.gatewayName = self.gatewayName
+        #     log.logContent = u'CTP初始化数据只接受1分钟,5分钟，15分钟bar'
+        #     self.onLog(log)
+        #     return
+        if self.dbURI and not self.jaqsUser:
+            symbol = vtSymbol.split(':')[0]
+            maincontract = re.split(r'(\d)', symbol)[0]
+            query_symbol = '_'.join([maincontract,type_])
+
+            self.dbClient = pymongo.MongoClient(self.dbURI)
+            if self.dbName not in self.dbClient.list_database_names():
+                return self.tdApi.writeLog('MongoDB not found')
+                    
+            if query_symbol in self.dbClient[self.dbName].collection_names():
+                collection = self.dbClient[self.dbName][query_symbol]
+
+                if since:
+                    since = datetime.strptime(str(since),"%Y%m%d")
+                    Cursor = collection.find({"datetime": {"$gt":since}}) 
+                if size:
+                    Cursor = collection.find({}).sort([("datetime",-1)]).limit(size)
+
+                data_df = pd.DataFrame(list(Cursor))
+                data_df.sort_values(by=['datetime'], inplace=True)
+            else:
+                self.tdApi.writeLog('History Data of %s not found in DB'%query_symbol)
+                data_df = pd.DataFrame([])
+                
+            return data_df
+
+        elif self.jaqsUser and not self.dbURI:
+            if type_ not in ['1min','5min','15min']:
+                log = VtLogData()
+                log.gatewayName = self.gatewayName
+                log.logContent = u'CTP初始化数据只接受1分钟,5分钟，15分钟bar'
+                self.onLog(log)
+                return
+            typeMap = {}
+            typeMap['1min'] = '1M'
+            typeMap['5min'] = '5M'
+            typeMap['15min'] = '15M'
+            freq_map = {
+                "1min": "1M",
+                "5min": "5M",
+                "15min": "15M"
+            }
+
+            freq_delta = {
+                "1M": timedelta(minutes=1),
+                "5M": timedelta(minutes=5),
+                "15M": timedelta(minutes=15),
+            }
+
+            symbol = vtSymbol.split(':')[0]
+            exchange = symbolExchangeDict.get(symbol, EXCHANGE_UNKNOWN)
+
+            if exchangeMap[EXCHANGE_SHFE] in exchange:
+                exchange = 'SHF'
+            elif exchangeMap[EXCHANGE_CFFEX] in exchange:
+                exchange = 'CFE'
+            elif exchangeMap[EXCHANGE_CZCE] in exchange:
+                exchange = 'CZC'
+            symbol = symbol + '.' + exchange
+            freq = typeMap[type_]
+            delta = freq_delta[freq]
+            if since:
+                start = int(since)
+            else:
+                start = None
+            end = self.current_datetime or datetime.now()
+            end = end.year*10000+end.month*100+end.day
+            days = self._select_trade_days(start, end)
+            results = {}
+            
+            if start is None:
+                days = reversed(days)
+            
+            length = 0
+            for date in days:
+                bar, msg = self.ds.bar(symbol, trade_date=date, freq=freq)
+                if msg != "0,":
+                    raise Exception(msg)
+                bar["datetime"] = list(map(self.make_dt, bar.date, bar.time))
+                bar["datetime"] -= delta
+                results[date] = bar[self.BARCOLUMN]
+                length += len(bar)
+                if size and (length >= size):
+                    break
+            
+            data = pd.concat([results[date] for date in sorted(results.keys())], ignore_index=True)
+            if size:
+                if since:
+                    data = data.iloc[:size]
+                else:
+                    data = data.iloc[-size:]
+            return data   
+
+        elif not (self.jaqsUser and self.dbURI):
+            self.tdApi.writeLog('Please fill History Data source in CTP_setting.json')
 
     def qryAllOrders(self, vtSymbol, order_id, status= None):
         pass
 
     def initPosition(self,vtSymbol):
         self.qryPosition()
+        self.qryAccount()
 
     def qryInstrument(self):
         self.tdApi.restQryInstrument()
@@ -266,7 +421,7 @@ class CtpMdApi(MdApi):
         self.tradingDt = None               # 交易日datetime对象
         self.tradingDate = EMPTY_STRING     # 交易日期字符串
         self.tickTime = None                # 最新行情time对象
-        self.lastTick = None
+        self.lastTickDict = {}
 
     #----------------------------------------------------------------------
     def onFrontConnected(self):
@@ -299,6 +454,7 @@ class CtpMdApi(MdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -326,6 +482,7 @@ class CtpMdApi(MdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
+            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -344,6 +501,7 @@ class CtpMdApi(MdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
+            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -413,11 +571,19 @@ class CtpMdApi(MdApi):
             self.tickTime = newTime         # 更新上一个tick时间
 
         # 处理tick成交量
-        if self.lastTick:
-            tick.lastVolume = tick.volume - self.lastTick.volume
-        tick.volumeChange = 1
+        get_tick = self.lastTickDict.get(str(tick.symbol),None)
+        if get_tick:
+            tick.lastVolume = tick.volume - get_tick.volume
+        else:
+            tick.lastVolume = 0
+            
+        if tick.lastVolume == 0:
+            tick.volumeChange = 0
+        else:
+            tick.volumeChange = 1
+        
         self.gateway.onTick(tick)
-        self.lastTick =tick
+        self.lastTickDict[str(tick.symbol)] = tick
     #----------------------------------------------------------------------
     def onRspSubForQuoteRsp(self, data, error, n, last):
         """订阅期权询价"""
@@ -593,6 +759,7 @@ class CtpTdApi(TdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
+            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
             # 标识登录失败，防止用错误信息连续重复登录
@@ -615,6 +782,7 @@ class CtpTdApi(TdApi):
             err.gatewayName = self.gatewayName
             err.errorID = error['ErrorID']
             err.errorMsg = error['ErrorMsg']
+            #err.errorMsg = error['ErrorMsg'].decode('gbk')
             self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -659,6 +827,7 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -678,6 +847,7 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -792,6 +962,7 @@ class CtpTdApi(TdApi):
         # 针对上期所持仓的今昨分条返回（有昨仓、无今仓），读取昨仓数据
         pos.ydPosition = 0
         exchange = self.symbolExchangeDict.get(pos.symbol, EXCHANGE_UNKNOWN)
+        
         if exchange == EXCHANGE_SHFE:
             if data['YdPosition'] and not data['TodayPosition']:
                 pos.ydPosition = data['Position']
@@ -858,6 +1029,9 @@ class CtpTdApi(TdApi):
                            data['Mortgage'] - data['Withdraw'] + data['Deposit'] +
                            data['CloseProfit'] + data['PositionProfit'] + data['CashIn'] -
                            data['Commission'])
+        self.gateway.onAccount(account)
+        self.writeLog(f"A/C-{account.accountID}: balance:{account.balance}, pre:{account.preBalance}")
+        self.writeLog(f"unsettled_pnl:{account.positionProfit}, closed_pnl:{account.closeProfit}, commission:{account.commission}")
 
     #----------------------------------------------------------------------
     def onRspQryInvestor(self, data, error, n, last):
@@ -910,13 +1084,14 @@ class CtpTdApi(TdApi):
         contract.exchange = exchangeMapReverse[data['ExchangeID']]
         contract.vtSymbol = VN_SEPARATOR.join([contract.symbol, contract.gatewayName])
         contract.name = data['InstrumentName']
+        #contract.name = data['InstrumentName'].decode('GBK')
 
         # 合约数值
         contract.size = data['VolumeMultiple']
         contract.priceTick = data['PriceTick']
         contract.strikePrice = data['StrikePrice']
         contract.underlyingSymbol = data['UnderlyingInstrID']
-        contract.expiryDate = data['ExpireDate']
+
         contract.productClass = productClassMapReverse.get(data['ProductClass'], PRODUCT_UNKNOWN)
 
         # 期权类型
@@ -932,19 +1107,11 @@ class CtpTdApi(TdApi):
 
         # 推送
         self.gateway.onContract(contract)
-        # 缓存合约信息，策略可以根据contract信息调整下单行为
-        contract_info = {}
-        contract_info['Exchange'] = contract.exchange
-        contract_info['VolumeMultiple'] = contract.size
-        contract_info['PriceTick'] = contract.priceTick
-        contract_info['StrikePrice'] = contract.strikePrice
-        contract_info['LongMarginRatio'] = data['LongMarginRatio']
-        contract_info['ShortMarginRatio'] = data['ShortMarginRatio']
-        
-        self.contractsDict.update({contract.vtSymbol:contract_info})
+        self.contractsList.append(contract.symbol + VN_SEPARATOR + contract.exchange)
+        a = {"contracts":self.contractsList}
 
-        with open(getTempPath('contract_info.json'),'w') as f:
-            json.dump(self.contractsDict,f,indent=4, ensure_ascii=False)
+        with open(getTempPath('contractList.json'),'w') as f:
+            json.dump(a,f,indent=4, ensure_ascii=False)
 
         # 缓存合约代码和交易所映射
         symbolExchangeDict[contract.symbol] = contract.exchange
@@ -1103,6 +1270,7 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1150,13 +1318,13 @@ class CtpTdApi(TdApi):
         'OrderLocalID': '         207', 'ParticipantID': '9999', 'OrderType': '\x00', 'SuspendTime': '', 'SessionID': 248121201, 'VolumeTotal': 0, 'OrderSubmitStatus': '3', 'VolumeCondition': '1', 
         'SettlementID': 1, 'IsSwapOrder': 0, 'ExchangeInstID': 'IF1811', 'OrderStatus': '0', 'InstallID': 1} 
 
-        2018-11-14 16:28:07,534  INFO: CTP_24   报单回报{'BusinessUnit': '', 'RelativeOrderSysID': '', 'UserID': '119247', 'ContingentCondition': '1', 'TraderID': '9999caf', 
-        'IsAutoSuspend': 0, 'BrokerID': '9999', 'UpdateTime': '', 'OrderPriceType': '2', 'SequenceNo': 949, 'ActiveTraderID': '9999caf', 'ActiveTime': '', 'FrontID': 1, 'RequestID': 0, 
-        'InsertDate': '20181112', 'InstrumentID': 'j1901', 'ZCETotalTradedVolume': 0, 'ForceCloseReason': '0', 'ClearingPartID': '', 'TradingDay': '20181113', 'CancelTime': '', 'OrderSource': '\x00', 
-        'ActiveUserID': '', 'MinVolume': 1, 'LimitPrice': 2302.0, 'BrokerOrderSeq': 1692, 'NotifySequence': 1, 'UserForceClose': 0, 'VolumeTotalOriginal': 1, 'ExchangeID': 'DCE', 'ClientID': '9999119227', 
-        'OrderRef': '6', 'Direction': '0', 'TimeCondition': '3', 'InsertTime': '18:13:49', 'UserProductInfo': '', 'InvestorID': '119247', 'OrderSysID': '        1596', 'GTDDate': '', 'StatusMsg': '全部成交', 
-        'BranchID': '', 'CombHedgeFlag': '1', 'StopPrice': 0.0, 'CombOffsetFlag': '1', 'VolumeTraded': 1, 'OrderLocalID': '         506', 'ParticipantID': '9999', 'OrderType': '\x00', 'SuspendTime': '', 
-        'SessionID': -624024875, 'VolumeTotal': 0, 'OrderSubmitStatus': '3', 'VolumeCondition': '1', 'SettlementID': 1, 'IsSwapOrder': 0, 'ExchangeInstID': 'j1901', 'OrderStatus': '0', 'InstallID': 1}
+        {'BusinessUnit': '', 'RelativeOrderSysID': '', 'UserID': '119247', 'ContingentCondition': '1', 'TraderID': '9999caf', 'IsAutoSuspend': 0, 'BrokerID': '9999', 'UpdateTime': '', 'OrderPriceType': '2', 
+        'SequenceNo': 949, 'ActiveTraderID': '9999caf', 'ActiveTime': '', 'FrontID': 1, 'RequestID': 0, 'InsertDate': '20181112', 'InstrumentID': 'j1901', 'ZCETotalTradedVolume': 0, 'ForceCloseReason': '0', 
+        'ClearingPartID': '', 'TradingDay': '20181113', 'CancelTime': '', 'OrderSource': '\x00', 'ActiveUserID': '', 'MinVolume': 1, 'LimitPrice': 2302.0, 'BrokerOrderSeq': 1692, 'NotifySequence': 1, 
+        'UserForceClose': 0, 'VolumeTotalOriginal': 1, 'ExchangeID': 'DCE', 'ClientID': '9999119227', 'OrderRef': '6', 'Direction': '0', 'TimeCondition': '3', 'InsertTime': '18:13:49', 'UserProductInfo': '', 
+        'InvestorID': '119247', 'OrderSysID': '        1596', 'GTDDate': '', 'StatusMsg': '全部成交', 'BranchID': '', 'CombHedgeFlag': '1', 'StopPrice': 0.0, 'CombOffsetFlag': '1', 'VolumeTraded': 1, 
+        'OrderLocalID': '         506', 'ParticipantID': '9999', 'OrderType': '\x00', 'SuspendTime': '', 'SessionID': -624024875, 'VolumeTotal': 0, 'OrderSubmitStatus': '3', 'VolumeCondition': '1', 
+        'SettlementID': 1, 'IsSwapOrder': 0, 'ExchangeInstID': 'j1901', 'OrderStatus': '0', 'InstallID': 1}
 
         """
         # 更新最大报单编号
@@ -1225,13 +1393,17 @@ class CtpTdApi(TdApi):
         trade.direction = directionMapReverse.get(data['Direction'], '')
 
         # 开平
-        trade.offset = offsetMapReverse.get(data['OffsetFlag'], '')
+        offset = offsetMapReverse.get(data['OffsetFlag'], '')
+        if offset in [OFFSET_CLOSEYESTERDAY,OFFSET_CLOSETODAY]:
+            trade.offset = OFFSET_CLOSE
+        else:
+            trade.offset = offset
 
         # 价格、报单量等数值
         trade.price = data['Price']
         trade.volume = data['Volume']
         trade.tradeTime = data['TradeTime']
-        trade.tradeDatetime =datetime.strptime(' '.join([data['TradingDay'], trade.tradeTime]), '%Y%m%d %H:%M:%S')
+        trade.tradeDatetime =datetime.strptime(' '.join([data['TradeDate'], trade.tradeTime]), '%Y%m%d %H:%M:%S')
 
         # 推送
         self.gateway.onTrade(trade)
@@ -1267,6 +1439,7 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1277,6 +1450,7 @@ class CtpTdApi(TdApi):
         err.gatewayName = self.gatewayName
         err.errorID = error['ErrorID']
         err.errorMsg = error['ErrorMsg']
+        #err.errorMsg = error['ErrorMsg'].decode('gbk')
         self.gateway.onError(err)
 
     #----------------------------------------------------------------------
@@ -1505,14 +1679,14 @@ class CtpTdApi(TdApi):
         pass
 
     #----------------------------------------------------------------------
-    def connect(self, userID, password, brokerID, address, authCode, userProductInfo):
+    def connect(self, userID, password, brokerID, address, authCode, appid):
         """初始化连接"""
         self.userID = userID                # 账号
         self.password = password            # 密码
         self.brokerID = brokerID            # 经纪商代码
         self.address = address              # 服务器地址
         self.authCode = authCode            # 验证码
-        self.userProductInfo = userProductInfo  # 产品信息
+        self.appid = appid  # 产品信息
 
         # 如果尚未建立服务器连接，则进行连接
         if not self.connectionStatus:
@@ -1556,12 +1730,12 @@ class CtpTdApi(TdApi):
     #----------------------------------------------------------------------
     def authenticate(self):
         """申请验证"""
-        if self.userID and self.brokerID and self.authCode and self.userProductInfo:
+        if self.userID and self.brokerID and self.authCode and self.appid:
             req = {}
             req['UserID'] = self.userID
             req['BrokerID'] = self.brokerID
             req['AuthCode'] = self.authCode
-            req['UserProductInfo'] = self.userProductInfo
+            req['AppID'] = self.appid
             self.reqID +=1
             self.reqAuthenticate(req, self.reqID)
 
@@ -1579,15 +1753,6 @@ class CtpTdApi(TdApi):
         req['BrokerID'] = self.brokerID
         req['InvestorID'] = self.userID
         self.reqQryInvestorPosition(req, self.reqID)
-
-    #---------------------------------------------------------------------
-    def qryOrder(self):
-        """查询订单"""
-        self.reqID +=1
-        req={}
-        req['BrokerID'] = self.brokerID
-        req['InvestorID'] = self.userID
-        self.reqQryOrder(req, self.reqID)
 
     #----------------------------------------------------------------------
     def sendOrder(self, orderReq):
