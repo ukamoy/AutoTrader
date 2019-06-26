@@ -34,10 +34,8 @@ class Status(Enum):
     PARTTRADED = "部分成交"
     ALLTRADED = "全部成交"
     CANCELLED = "已撤销"
-    CANCELLING = "撤单中"
     REJECTED = "拒单"
-    UNKNOWN = "未知"
-    FINISHED = ("全部成交", "已撤销", "拒单")
+
 
 class Product(Enum):
     """
@@ -52,14 +50,17 @@ class Product(Enum):
     ETF = "ETF"
     BOND = "债券"
     WARRANT = "权证"
+    SPREAD = "价差"
+    FUND = "基金"
 
 
-class PriceType(Enum):
+class OrderType(Enum):
     """
-    Order price type.
+    Order type.
     """
     LIMIT = "限价"
     MARKET = "市价"
+    STOP = "STOP"
     FAK = "FAK"
     FOK = "FOK"
 
@@ -77,27 +78,43 @@ class Exchange(Enum):
     Exchange.
     """
     # Chinese
-    CFFEX = "CFFEX"
-    SHFE = "SHFE"
-    CZCE = "CZCE"
-    DCE = "DCE"
-    INE = "INE"
-    SSE = "SSE"
-    SZSE = "SZSE"
-    SGE = "SGE"
+    CFFEX = "CFFEX"         # China Financial Futures Exchange
+    SHFE = "SHFE"           # Shanghai Futures Exchange
+    CZCE = "CZCE"           # Zhengzhou Commodity Exchange
+    DCE = "DCE"             # Dalian Commodity Exchange
+    INE = "INE"             # Shanghai International Energy Exchange
+    SSE = "SSE"             # Shanghai Stock Exchange
+    SZSE = "SZSE"           # Shenzhen Stock Exchange
+    SGE = "SGE"             # Shanghai Gold Exchange
+    WXE = "WXE"             # Wuxi Steel Exchange
 
     # Global
-    SMART = "SMART"
-    NYMEX = "NYMEX"
-    GLOBEX = "GLOBEX"
-    IDEALPRO = "IDEALPRO"
-    CME = "CME"
-    ICE = "ICE"
-    SEHK = "SEHK"
-    HKFE = "HKFE"
+    SMART = "SMART"         # Smart Router for US stocks
+    NYMEX = "NYMEX"         # New York Mercantile Exchange
+    COMEX = "COMEX"         # a division of theNew York Mercantile Exchange
+    GLOBEX = "GLOBEX"       # Globex of CME
+    IDEALPRO = "IDEALPRO"   # Forex ECN of Interactive Brokers
+    CME = "CME"             # Chicago Mercantile Exchange
+    ICE = "ICE"             # Intercontinental Exchange
+    SEHK = "SEHK"           # Stock Exchange of Hong Kong
+    HKFE = "HKFE"           # Hong Kong Futures Exchange
+    SGX = "SGX"             # Singapore Global Exchange
+    CBOT = "CBT"            # Chicago Board of Trade
+    DME = "DME"             # Dubai Mercantile Exchange
+    EUREX = "EUX"           # Eurex Exchange
+    APEX = "APEX"           # Asia Pacific Exchange
+    LME = "LME"             # London Metal Exchange
+    BMD = "BMD"             # Bursa Malaysia Derivatives
+    TOCOM = "TOCOM"         # Tokyo Commodity Exchange
+    EUNX = "EUNX"           # Euronext Exchange
+    KRX = "KRX"             # Korean Exchange
 
     # CryptoCurrency
     BITMEX = "BITMEX"
+    OKEX = "OKEX"
+    HUOBI = "HUOBI"
+    BITFINEX = "BITFINEX"
+    BINANCE = "BINANCE"
 
 
 class Currency(Enum):
@@ -117,7 +134,14 @@ class Interval(Enum):
     HOUR = "1h"
     DAILY = "d"
     WEEKLY = "w"
-
+class PriceType(Enum):
+    """
+    Order price type.
+    """
+    LIMIT = "限价"
+    MARKET = "市价"
+    FAK = "FAK"
+    FOK = "FOK"
 class Format(Enum):
     """
     reusable format string
