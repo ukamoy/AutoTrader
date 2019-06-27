@@ -460,7 +460,7 @@ class CtpMdApi(MdApi):
     #----------------------------------------------------------------------
     def onRspUserLogin(self, data, error, n, last):
         """登陆回报"""
-        print(data,error,'登陆回报登陆回报登陆回报登陆回报')
+        print("MDAPI onRspUserLogin:",data,error)
         # 如果登录成功，推送日志信息
         if error['ErrorID'] == 0:
             self.loginStatus = True
@@ -732,6 +732,7 @@ class CtpTdApi(TdApi):
 
     #----------------------------------------------------------------------
     def onRspUserLogin(self, data, error, n, last):
+        print("TDAPI onRspUserLogin:",data,error)
         """登陆回报"""
         """{'FFEXTime': '18:26:27', 'UserID': '119247', 'TradingDay': '20181101', 'CZCETime': '18:26:27', 'BrokerID': '9999', 'SHFETime': '18:26:27', 'INETime': '--:--:--', 'DCETime': '18:26:27', 
         'LoginTime': '16:39:33', 'MaxOrderRef': '1', 'FrontID': 1, 'SystemName': 'TradingHosting', 'SessionID': 221906687} {'ErrorID': 0, 'ErrorMsg': 'CTP:正确'}
@@ -942,7 +943,7 @@ class CtpTdApi(TdApi):
         'PositionDate': '2', 'AbandonFrozen': 0, 'ShortFrozenAmount': 0.0, 'FrozenCash': 0.0, 'SettlementID': 1, 'Position': 0, 'ExchangeMargin': 0.0, 'MarginRateByMoney': 0.1, 'PositionProfit': 0.0, 
         'Commission': 3.9650000000000003} {'ErrorID': 0, 'ErrorMsg': ''}"""
         # print(data,error,'持仓查询回报持仓查询回报持仓查询回报持仓查询回报')
-        if not data['InstrumentID']:
+        if not data.get('InstrumentID', None):
             return
 
         # 获取持仓缓存对象
