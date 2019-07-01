@@ -9,11 +9,12 @@ from datetime import datetime
 from copy import copy
 
 from vnpy.event import Event
-from vnpy.trader.setting import SETTINGS
 from vnpy.trader.vtEvent import *
 from vnpy.trader.vtGateway import *
 from vnpy.trader.language import text
 from vnpy.trader.vtFunction import getTempPath
+from vnpy.trader.vtGlobal import globalSetting
+
 
 # from pymongo import MongoClient, ASCENDING
 # from pymongo.errors import ConnectionFailure
@@ -323,7 +324,7 @@ class MainEngine(object):
     #----------------------------------------------------------------------
     def initLogEngine(self):
         """初始化日志引擎"""
-        if not SETTINGS["log.active"]:
+        if not globalSetting["logActive"]:
             return
         
         # 创建引擎
@@ -337,14 +338,14 @@ class MainEngine(object):
             "error": LogEngine.LEVEL_ERROR,
             "critical": LogEngine.LEVEL_CRITICAL,
         }
-        level = levelDict.get(SETTINGS["log.level"], LogEngine.LEVEL_CRITICAL)
+        level = levelDict.get(globalSetting["logLevel"], LogEngine.LEVEL_CRITICAL)
         self.logEngine.setLogLevel(level)
         
         # 设置输出
-        if SETTINGS['log.console']:
+        if globalSetting['logConsole']:
             self.logEngine.addConsoleHandler()
             
-        if SETTINGS['log.file']:
+        if globalSetting['logFile']:
             self.logEngine.addFileHandler()
             
         # 注册事件监听

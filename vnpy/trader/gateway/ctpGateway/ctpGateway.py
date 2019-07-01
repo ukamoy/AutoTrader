@@ -139,11 +139,13 @@ class CtpGateway(VtGateway):
             # 如果json文件提供了验证码
             if 'authCode' in setting:
                 authCode = str(setting['authCode'])
-                appid = str(setting['appid'])
+                appID = str(setting['appID'])
+                userProductInfo = str(setting['userProductInfo'])
                 self.tdApi.requireAuthentication = True
             else:
                 authCode = None
-                appid = None
+                appID = None
+                userProductInfo = None
 
         except KeyError:
             log = VtLogData()
@@ -154,7 +156,7 @@ class CtpGateway(VtGateway):
 
         # 创建行情和交易接口对象
         self.mdApi.connect(userID, password, brokerID, mdAddress)
-        self.tdApi.connect(userID, password, brokerID, tdAddress,authCode, appid)
+        self.tdApi.connect(userID, password, brokerID, tdAddress, authCode, appID, userProductInfo)
 
         # 初始化并启动查询
         setQryEnabled = setting.get('setQryEnabled', False)
@@ -1680,14 +1682,16 @@ class CtpTdApi(TdApi):
         pass
 
     #----------------------------------------------------------------------
-    def connect(self, userID, password, brokerID, address, authCode, appid):
+    def connect(self, userID, password, brokerID, address, authCode, appID, userProductInfo):
         """初始化连接"""
         self.userID = userID                # 账号
         self.password = password            # 密码
         self.brokerID = brokerID            # 经纪商代码
         self.address = address              # 服务器地址
+        self.appID = appID                  # 产品ID
         self.authCode = authCode            # 验证码
-        self.appid = appid  # 产品信息
+        self.userProductInfo = userProductInfo  # 产品信息
+
 
         # 如果尚未建立服务器连接，则进行连接
         if not self.connectionStatus:
@@ -1731,12 +1735,14 @@ class CtpTdApi(TdApi):
     #----------------------------------------------------------------------
     def authenticate(self):
         """申请验证"""
-        if self.userID and self.brokerID and self.authCode and self.appid:
+        if self.userID and self.brokerID and self.authCode and self.appID:
             req = {}
             req['UserID'] = self.userID
             req['BrokerID'] = self.brokerID
             req['AuthCode'] = self.authCode
-            req['AppID'] = self.appid
+            req['AppID'] = self.appID
+            if self.userProductInfo:
+                req['UserProductInfo'] = self.userProductInfo
             self.reqID +=1
             self.reqAuthenticate(req, self.reqID)
 

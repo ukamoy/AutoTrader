@@ -29,7 +29,7 @@ from vnpy.trader.language import constant
 from vnpy.trader.vtObject import VtTickData, VtBarData
 from vnpy.trader.vtGateway import VtSubscribeReq, VtOrderReq, VtCancelOrderReq, VtLogData
 from vnpy.trader.vtFunction import todayDate, getJsonPath
-from vnpy.trader.email import EmailEngine
+from vnpy.trader.utils.notification import notify
 from vnpy.trader.vtFunction import getTempPath
 from decimal import *
 
@@ -47,7 +47,6 @@ class CtaEngine(object):
         """Constructor"""
         self.mainEngine = mainEngine
         self.eventEngine = eventEngine
-        self.mailEngine = EmailEngine()
 
         # 当前日期
         self.today = todayDate()
@@ -451,7 +450,7 @@ class CtaEngine(object):
 
             self.callStrategyFunc(strategy, strategy.onTrade, trade)
     #----------------------------------
-    def processPositionEvent(self, event):           # nearly abandon
+    def processPositionEvent(self, event):
         """处理持仓推送"""
         
         pos = event.dict_['data']
@@ -460,17 +459,17 @@ class CtaEngine(object):
             if strategy.inited and pos.vtSymbol in strategy.symbolList:
                 if pos.direction == constant.DIRECTION_LONG:
                     posName = f"{pos.vtSymbol}_LONG"
-                    strategy.posDict[str(posName)] = pos.position
+        #             strategy.posDict[str(posName)] = pos.position
                     if 'CTP' in posName:
                         self.ydPositionDict[str(posName)] = pos.ydPosition
-                    strategy.eveningDict[str(posName)] = pos.position - pos.frozen
+        #             strategy.eveningDict[str(posName)] = pos.position - pos.frozen
 
                 elif pos.direction == constant.DIRECTION_SHORT:
                     posName2 = f"{pos.vtSymbol}_SHORT"
-                    strategy.posDict[str(posName2)] = pos.position
+        #             strategy.posDict[str(posName2)] = pos.position
                     if 'CTP' in posName2:
                         self.ydPositionDict[str(posName2)] = pos.ydPosition
-                    strategy.eveningDict[str(posName2)] = pos.position - pos.frozen
+        #             strategy.eveningDict[str(posName2)] = pos.position - pos.frozen
 
                 # 保存策略持仓到数据库
                 # self.saveSyncData(strategy)  
@@ -584,7 +583,7 @@ class CtaEngine(object):
             # 创建策略实例
             strategy = strategyClass(self, setting)
             self.strategyDict[name] = strategy
-            for key, value in setting:
+            for key, value in setting.items():
                 setattr(strategy, key, value)
 
             # 创建委托号列表
@@ -800,7 +799,7 @@ class CtaEngine(object):
             content = '\n'.join([u'策略%s：触发异常, 当前状态已保存, 挂单将全部撤销' %strategy.name,
                                 traceback.format_exc()])
             
-            self.mailEngine.send_email(content, strategy.name)
+            notify(content, strategy.name)
             self.writeCtaLog(content)
 
     #----------------------------------------------------------------------------------------
